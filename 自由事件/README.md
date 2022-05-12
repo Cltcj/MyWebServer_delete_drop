@@ -237,7 +237,7 @@ timeout: 限时等待事件的产生, 也可以设置为NULL, 没有限时。
 
 ```c
 int event_del(struct event *ev);
-函数说明: 将事件从未决态变为非未决态, 相当于epoll的下树（epoll_ctl调用			EPOLL_CTL_DEL操作）操作。
+函数说明: 将事件从未决态变为非未决态, 相当于epoll的下树（epoll_ctl调用EPOLL_CTL_DEL操作）操作。
 参数说明: ev指的是由event_new创建的事件.
 ```
 
