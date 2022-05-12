@@ -111,4 +111,4 @@ Down和up操作需要被设计成原语，不可分割，通常做法是在执�
 [进程间通信1](https://blog.csdn.net/CltCj/article/details/123686100)
 
 
-[进程间通信2](https://blog.csdn.net/CltCj/article/details/123686100)
+[进程间通信2](https://blog.csdn.net/CltCj/article/details/123719614)
