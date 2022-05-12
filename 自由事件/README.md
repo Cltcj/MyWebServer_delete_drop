@@ -126,32 +126,122 @@ const char * event_base_get_method(const struct event_base *base);
 
 ```c
 int event_base_loop(struct event_base *base, int flags);   //event.h的L:660
-   函数说明: 进入循环等待事件
-参数说明:
-base: 由event_base_new函数返回的指向event_base结构的指针
-flags的取值：
-#define EVLOOP_ONCE	0x01
-				只触发一次, 如果事件没有被触发, 阻塞等待
-#define EVLOOP_NONBLOCK	0x02
-				非阻塞方式检测事件是否被触发, 不管事件触发与否, 都会					立即返回.
+/*
+ * 函数说明: 进入循环等待事件
+ * 参数说明:
+ * base: 由event_base_new函数返回的指向event_base结构的指针
+ * flags的取值：
+ * #define EVLOOP_ONCE	0x01
+ * 				只触发一次, 如果事件没有被触发, 阻塞等待
+ * #define EVLOOP_NONBLOCK	0x02
+ * 				非阻塞方式检测事件是否被触发, 不管事件触发与否, 都会立即返回.
+ */
 ```
 
 **上面这个函数一般不用, 而大多数都调用libevent给我们提供的另外一个API：**
 
+```c
+int event_base_dispatch(struct event_base *base);   //event.h的L:364
+
+/*
+ * 函数说明: 进入循环等待事件
+ * 参数说明:由event_base_new函数返回的指向event_base结构的指针
+ * 调用该函数, 相当于没有设置标志位的event_base_loop。程序将会一直运行, 直到没有需要检测的事件了, 或者被结束循环的API终止。
+ */
+int event_base_loopexit(struct event_base *base, const struct timeval *tv);
+int event_base_loopbreak(struct event_base *base);
+struct timeval {
+	long    tv_sec;                    
+	long    tv_usec;            
+};
+```
+
+两个函数的区别是如果正在执行激活事件的回调函数, 那么`event_base_loopexit`将在事件回调执行结束后终止循环（如果tv时间非NULL, 那么将等待tv设置的时间后立即结束循环）, 而`event_base_loopbreak`会立即终止循环。
+
+## 使用libevent库的步骤：
+
+1 创建根节点--event_base_new
+
+2 设置监听事件和数据可读可写的事件的回调函数
+
+设置了事件对应的回调函数以后, 当事件产生的时候会自动调用回调函数
+
+3 事件循环--event_base_dispatch
+
+相当于while(1), 在循环内部等待事件的发生,  若有事件发生则会触发事件对应的回调函数。
+
+4 释放根节点--event_base_free
+
+释放由event_base_new和event_new创建的资源, 分别调用event_base_free和event_free函数.
+
+## 事件驱动-event
+
+事件驱动实际上是libevent的核心思想, 本小节主要介绍基本的事件event。
+
+主要的状态转化：
+
+![image](https://user-images.githubusercontent.com/81791654/167972257-a4bfd4d0-255e-4e93-9b8d-40486dbe4731.png)
 
 
+主要几个状态：
+
+无效的指针: 此时仅仅是定义了 `struct event *ptr`
+
+非未决：相当于创建了事件, 但是事件还没有处于被监听状态, 类似于我们使用epoll的时候定义了struct epoll_event ev并且对ev的两个字段进行了赋值, 但是此时尚未调用epoll_ctl对事件上树.
+
+未决：就是对事件开始监听, 暂时未有事件产生。相当于调用epoll_ctl对要监听的事件上树, 但是没有事件产生.
+
+激活：代表监听的事件已经产生, 这时需要处理, 相当于调用epoll_wait函数有返回, 当事件被激活以后,  libevent会调用该事件对应的回调函数
+
+libevent的事件驱动对应的结构体为struct event, 对应的函数在图上也比较清晰, 下面介绍一下主要的函数:
+
+```c
+typedef void (*event_callback_fn)(evutil_socket_t fd, short events, void *arg);
+struct event *event_new(struct event_base *base, evutil_socket_t fd, short events, event_callback_fn cb, void *arg);
+
+/*
+函数说明: event_new负责创建event结构指针, 同时指定对应的地基base, 		  还有对应的文件描述符, 事件, 以及回调函数和回调函数的参数。
+参数说明：
+base: 对应的根节点--地基
+fd: 要监听的文件描述符
+events:要监听的事件
+	#define  EV_TIMEOUT    0x01   //超时事件
+	#define  EV_READ       0x02    //读事件
+	#define  EV_WRITE      0x04    //写事件
+	#define  EV_SIGNAL     0x08    //信号事件
+	#define  EV_PERSIST     0x10    //周期性触发
+	#define  EV_ET         0x20    //边缘触发, 如果底层模型支持设置则有效, 若不支持则无效.
+	若要想设置持续的读事件则： EV_READ | EV_PERSIST
+*/
+```
+
+cb 回调函数, 原型如下：
+
+`typedef void (*event_callback_fn)(evutil_socket_t fd, short events, void *arg);`
+
+注意: 回调函数的参数就对应于event_new函数的fd, event和arg
+
+```c
+#define evsignal_new(b, x, cb, arg)             \                                                                    
+      event_new((b), (x), EV_SIGNAL|EV_PERSIST, (cb), (arg))
+```
 
 
 ```c
-const char * event_base_get_method(const struct event_base *base);
-函数说明: 获得当前base节点使用的多路io方法
-函数参数: event_base结构的base指针.
-返回值: 获得当前base节点使用的多路io方法的指针
+int event_add(struct event *ev, const struct timeval *timeout);
+函数说明: 将非未决态事件转为未决态, 相当于调用epoll_ctl函数(EPOLL_CTL_ADD), 开始监听事件是否产生, 相当于epoll的上树操作.
+参数说明：
+	ev: 调用event_new创建的事件
+timeout: 限时等待事件的产生, 也可以设置为NULL, 没有限时。
 ```
 
 ```c
-const char * event_base_get_method(const struct event_base *base);
-函数说明: 获得当前base节点使用的多路io方法
-函数参数: event_base结构的base指针.
-返回值: 获得当前base节点使用的多路io方法的指针
+int event_del(struct event *ev);
+函数说明: 将事件从未决态变为非未决态, 相当于epoll的下树（epoll_ctl调用			EPOLL_CTL_DEL操作）操作。
+参数说明: ev指的是由event_new创建的事件.
+```
+
+```c
+void event_free(struct event *ev);
+函数说明: 释放由event_new申请的event节点。
 ```
