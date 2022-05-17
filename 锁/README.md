@@ -102,7 +102,7 @@ int pthread_mutexattr_destory(pthread_mutex_t *attr);
 ```
 销毁互斥锁属性对象。
 
-pshared 属性的设置和获取。
+`pshared`属性的设置和获取。
 ```c
 pthread_mutexattr_getpshared(const pthread_mutexattr_t *attr, int *pshared);
 ```
@@ -112,7 +112,7 @@ pthread_mutexattr_setpshared(pthread_mutexattr_t *attr, int pshared);
 ```
 设置互斥锁对象pshared属性。
 
-pshared属性：
+`pshared`属性：
 
 `PTHREAD_PROCESS_SHARED` 互斥锁可以被进程共享。
 `PTHREAD_PROCESS_PRIVATE` 互斥锁只能和被锁的初始化线程隶属于同一进程的线程共享。
@@ -163,7 +163,7 @@ int pthread_cond_signal(pthread_cond_t *cond);
 ```c
 int pthread_cond_wait(pthread_cond_t *cond, pthread_mutex_t *mutex);
 ```
-用于等待目标条件变量，mutex用于保护条件变量的互斥锁。一般而言，流程是：先锁住，然后调用pthread_cond_wait，pthread_cond_wait会把锁解开，放在等待队列中（这两部操作是原子操作）；如果被唤醒，重新锁上，返回。这样做的好处是，不用每次都【上锁，询问条件变量满不满足，不满足重新解锁】这种操作，条件变量满足之后自动返回。
+用于等待目标条件变量，mutex用于保护条件变量的互斥锁。一般而言，流程是：先锁住，然后调用`pthread_cond_wait`，`pthread_cond_wait`会把锁解开，放在等待队列中（这两部操作是原子操作）；如果被唤醒，重新锁上，返回。这样做的好处是，不用每次都【上锁，询问条件变量满不满足，不满足重新解锁】这种操作，条件变量满足之后自动返回。
 ```c
 int pthread_cond_timedwait(pthread_cond_t *cond, pthread_mutex_t *mutex, const struct timespec *abstime)
 ```
@@ -171,7 +171,7 @@ int pthread_cond_timedwait(pthread_cond_t *cond, pthread_mutex_t *mutex, const s
 
 以上函数成功返回0，失败返回-1并设置errno。
 
-补充：pthread_condattr_t条件变量属性结构体结构体
+补充：`pthread_condattr_t`条件变量属性结构体结构体
 
 属性：
 
@@ -201,7 +201,7 @@ int pthread_condattr_setshared(pthread_condattr_t* attr,int pshared);
 ```
 设置条件变量的进程共享属性
 
-pshared属性：
+`pshared`属性：
 
 `PTHREAD_PROCESS_SHARED` 互斥锁可以被进程共享。
 `PTHREAD_PROCESS_PRIVATE` 互斥锁只能和被锁的初始化线程隶属于同一进程的线程共享。
@@ -213,11 +213,14 @@ int pthread_condattr_getclock(const pthread_condattr_t* restrict attr,clockid_t 
 ```c
 int pthread_condattr_setclock(pthread_condattr_t* attr,clockid_t clock_id);
 ```
-此函数用于设置pthread_cond_timewait函数使用的时钟ID
+此函数用于设置`pthread_cond_timewait`函数使用的时钟ID
 
 clock属性：
 
-CLOCK_REALTIME :实时系统时间
-CLOCK_MONOTONIC :不带负跳数的实时系统时间
-CLOCK_PROCESS_CPUTIME_ID: 调用进程的CPU时间
-CLOCK_THREAD_CPUTIME_ID: 调用线程的CPU时间
+>`CLOCK_REALTIME`:实时系统时间
+
+>`CLOCK_MONOTONIC`:不带负跳数的实时系统时间
+
+>`CLOCK_PROCESS_CPUTIME_ID`: 调用进程的CPU时间
+
+>`CLOCK_THREAD_CPUTIME_ID`: 调用线程的CPU时间
