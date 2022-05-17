@@ -90,3 +90,134 @@ int pthread_mutex_unlock(pthread_mutex_t *mutex);
 ```
 原子操作，解锁，如果有其他线程等待该锁，会得到。
 
+**补充：结构体pthread_mutexattr_t类型的设置和获取。**
+
+头文件 `#include <pthread.h>`
+```c
+int pthread_mutexattr_init(pthread_mutexattr_t *attr);
+```
+初始化互斥锁属性对象。
+```c
+int pthread_mutexattr_destory(pthread_mutex_t *attr);
+```
+销毁互斥锁属性对象。
+
+pshared 属性的设置和获取。
+```c
+pthread_mutexattr_getpshared(const pthread_mutexattr_t *attr, int *pshared);
+```
+获取attr互斥锁pshared属性，存储在pshared中。
+```c
+pthread_mutexattr_setpshared(pthread_mutexattr_t *attr, int pshared);
+```
+设置互斥锁对象pshared属性。
+
+pshared属性：
+
+`PTHREAD_PROCESS_SHARED` 互斥锁可以被进程共享。
+`PTHREAD_PROCESS_PRIVATE` 互斥锁只能和被锁的初始化线程隶属于同一进程的线程共享。
+type属性的获取和设置
+```c
+int pthread_mutexattr_gettype(const pthread_mutexattr_t *attr, int *type);
+```
+获取type属性，存储在变量type中。
+```c
+int pthread_mutexattr_settype(pthread_mutexattr_t *attr, int type);
+```
+设置type属性。
+
+type属性：
+
+`PTHREAD_MUTEX_NORMAL` 普通锁。默认类型，容易引发问题：如果对已经加锁的普通锁再加锁，会引发死锁；对已经解锁的普通锁解锁，对被其他进程加锁的普通锁解锁，会导致不可预期的结果。
+
+`PTHREAD_MUTEX_ERRORCHECK` 检错锁。如果对已经加锁的检错锁再次加锁，加锁操作会返回EDEADLK；对已经解锁的检错锁解锁，或对已经其他进程加锁的检错锁解锁，解锁操作返回EPERM。[相当于解决了简单锁引发死锁和不确定结果的问题]
+
+`PTHREAD_MUTEX_RECURSIVE` 嵌套锁。允许一个线程再释放锁之前多次加锁而不发生死锁。但如果其他线程要获取这个锁，当前锁的拥有者必须进程相应次数的解锁操作（有点类似上边信号量。）。如果对一个已经被其他线程加锁的嵌套锁解锁，或对已经解锁的嵌套锁再次解锁，解锁操作返回EPERM
+
+`PTHREAD_MUTEX_DEFAULT` 默认锁。对加锁的默认锁再次加锁，对被其他线程加锁的默认锁解锁，对已经解锁的默认锁解锁，都会导致不可预测的行为。因为这种锁实现的时候可能被映射为上面三种锁之一。
+
+
+## 条件变量
+
+提供一种线程通知机制，当某个共享数据达到某个条件时，唤醒等待这个共享数据的线程。
+
+头文件`#include <pthread.h>`
+
+函数：
+```c
+int pthread_cond_init(pthread_cond_t *cond, const pthread_condattr_t *cond_attr);
+```
+初始化条件变量，`cond_attr`参数指定条件变量属性。如果设置为NULL则表示使用默认属性。也可以使用`pthread_cond_t cond = PTHREAD_COND_INITIALIZER`;初始化一个条件变量，`PTHREAD_COND_INITIALIZER`实际上是把条件变量的各个字段初始化为0。
+```c
+int pthread_cond_destory(pthread_cond_t *cond);
+```
+用于销毁条件变量，以释放其占用的内核资源。
+```c
+int pthread_cond_broadcast(pthread_cond_t *cond);
+```
+以广播的形式唤醒所有等待cond的线程。
+```c
+int pthread_cond_signal(pthread_cond_t *cond);
+```
+只唤醒一个等待的线程，唤醒哪个取决于线程的优先级和调度策略。
+```c
+int pthread_cond_wait(pthread_cond_t *cond, pthread_mutex_t *mutex);
+```
+用于等待目标条件变量，mutex用于保护条件变量的互斥锁。一般而言，流程是：先锁住，然后调用pthread_cond_wait，pthread_cond_wait会把锁解开，放在等待队列中（这两部操作是原子操作）；如果被唤醒，重新锁上，返回。这样做的好处是，不用每次都【上锁，询问条件变量满不满足，不满足重新解锁】这种操作，条件变量满足之后自动返回。
+```c
+int pthread_cond_timedwait(pthread_cond_t *cond, pthread_mutex_t *mutex, const struct timespec *abstime)
+```
+和上边的等待类似，但是在给定时刻前条件没有满足，则返回ETIMEDOUT，结束等待。
+
+以上函数成功返回0，失败返回-1并设置errno。
+
+补充：pthread_condattr_t条件变量属性结构体结构体
+
+属性：
+
+进程共享属性【pshared属性】
+时钟属性
+函数:
+
+头文件`#include <pthread.h>`
+
+初始化和反初始化
+```c
+int pthread_condattr_init(pthread_condattr_t *attr);
+```
+功能：对条件变量属性结构体初始化。调用此函数之后，条件变量属性结构体的属性都是系统默认值，如果想要设置其他属性，还需要调用不同的函数进行设置
+```c
+int pthread_condattr_destroy(pthread_condattr_t* attr);
+```
+功能：对条件变量属性结构体反初始化（销毁）。只反初始化，不释放内存
+
+pthread属性的获取与设置
+```c
+int pthread_condattr_getshared(const pthread_condattr_t* restrict attr,int* restrict pshared);
+```
+获取条件变量的进程共享属性
+```c
+int pthread_condattr_setshared(pthread_condattr_t* attr,int pshared);
+```
+设置条件变量的进程共享属性
+
+pshared属性：
+
+`PTHREAD_PROCESS_SHARED` 互斥锁可以被进程共享。
+`PTHREAD_PROCESS_PRIVATE` 互斥锁只能和被锁的初始化线程隶属于同一进程的线程共享。
+clock时钟属性的获取与设置
+```c
+int pthread_condattr_getclock(const pthread_condattr_t* restrict attr,clockid_t *restrict clock_id);
+```
+此函数获取可被用于pthread_cond_timedwait函数的时钟ID。pthread_cond_timedwait函数使用前需要用pthread_condattr_t对条件变量进行初始化
+```c
+int pthread_condattr_setclock(pthread_condattr_t* attr,clockid_t clock_id);
+```
+此函数用于设置pthread_cond_timewait函数使用的时钟ID
+
+clock属性：
+
+CLOCK_REALTIME :实时系统时间
+CLOCK_MONOTONIC :不带负跳数的实时系统时间
+CLOCK_PROCESS_CPUTIME_ID: 调用进程的CPU时间
+CLOCK_THREAD_CPUTIME_ID: 调用线程的CPU时间
