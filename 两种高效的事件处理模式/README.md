@@ -2,6 +2,8 @@
 
 &emsp;&emsp;随着网络设计模式的兴起，Reactor和Proactor事件处理模式应运而生。同步I/O模式通常用于实现Reactor模式，异步I/O模型则用于实现Proactor模式。
 
+&emsp;&emsp;异步I/O：内核执行读写操作并触发读写完成事件。程序没有阻塞阶段。
+
 
 
 
@@ -14,6 +16,28 @@
 &emsp;&emsp;在web服务器开发中，有2种常见的架构，基于线程的架构和事件驱动的架构。初期使用一个连接用一个线程来处理，这样显然对于高并发连接而言会使得线程创建开销很大，而改进方法使用多进程来处理每个请求，这样单个请求出问题不会影响到其它请求，但进程切换很慢且内存消耗很大。为了优化线程数量以获得最佳的整体性能，同时为了避免线程创建/销毁的开销，通常在实际应用中 , 会在一个数量有限的阻塞队列上使用一个单独的线程用于分发（epoll），事件发生时，再从一个线程池（thread pool）中分发工作线程给一个连接。
 
 ## Reactor模式
+
+![image](https://user-images.githubusercontent.com/81791654/169034418-29316458-6905-4442-9eb0-97ab740bc26e.png)
+![image](https://user-images.githubusercontent.com/81791654/169034814-371a18b0-4c34-42e0-944a-d3af20097dad.png)
+
+## Proactor模式
+
+![image](https://user-images.githubusercontent.com/81791654/169035047-69ce1faf-621e-4765-83e5-d2de953aa555.png)
+
+![image](https://user-images.githubusercontent.com/81791654/169035121-ed39e0e7-0b65-4fa2-9169-1c3448ffdf5f.png)
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 （1） Reactor模式组成及经典实现方案
 
