@@ -33,6 +33,8 @@ RAII “Resource Acquisition Is Initialization” 资源获取即初始化：
 
 RAII的核心思想是将资源或者状态与对象的生命周期绑定，通过C++的语言机制，实现资源和状态的安全管理,**智能指针**是RAII最好的例子
 
+## 三种专门用于线程同步的机制
+
 线程同步机制包装类
 ===============
 多线程同步，确保任一时刻只能有一个线程能进入关键代码段.
@@ -43,7 +45,7 @@ RAII的核心思想是将资源或者状态与对象的生命周期绑定，通�
 对上边介绍的三种锁进行封装，将锁的创建和销毁封装在类的构造和析构函数中，实现RAII机制
 类中主要是Linux下三种锁进行封装，将锁的创建于销毁函数封装在类的构造与析构函数中，实现RAII[“Resource Acquisition is Initialization”，资源获取即初始化] 机制。
 
-## POSIX信号量
+### POSIX信号量
 
 POSIX信号量函数的名字都以sem_开头：
 
@@ -87,7 +89,14 @@ int sem_post(sem_t *sem);
 
 以上函数成功返回0，失败返回-1并设置errno。
 
-## 互斥锁【互斥量】
+![image](https://user-images.githubusercontent.com/81791654/169470185-b8130097-1be8-4392-9a29-09d41e80092b.png)
+
+
+### 互斥锁【互斥量】
+
+&emsp;&emsp;互斥锁（也称互斥量）可以用于保护关键代码段，以确保其独占式的访问，这有点像一个二进制信号量。当进入关键代码段时，我们需要获得互斥锁并将其加锁，这等价于二进制信号量的P操作：当离开关键代码段时，我们需要对互斥锁解锁，以唤醒其他等待该互斥锁的线程，这等价于二进制信号量的V操作。
+
+![image](https://user-images.githubusercontent.com/81791654/169471147-20b9b7e1-a816-427b-a37f-a6c45facb0b5.png)
 
 头文件 `#include <pthread.h>`
 
@@ -163,6 +172,10 @@ type属性：
 ## 条件变量
 
 提供一种线程通知机制，当某个共享数据达到某个条件时，唤醒等待这个共享数据的线程。
+
+![image](https://user-images.githubusercontent.com/81791654/169471654-6be39917-c8fc-42e0-92a9-293525135f7d.png)
+![image](https://user-images.githubusercontent.com/81791654/169471690-170fafdb-6cda-4799-8c3c-700cfea01bcf.png)
+
 
 头文件`#include <pthread.h>`
 
