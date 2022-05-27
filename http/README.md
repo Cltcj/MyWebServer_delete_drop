@@ -389,6 +389,92 @@ private:
 };
 ```
 
+	
+	
+**epoll相关代码**
+	
+项目中epoll相关代码部分包括非阻塞模式、内核事件表注册事件、删除事件、重置EPOLLONESHOT事件四种。
+
+* 非阻塞模式
+
+```cpp
+//对文件描述符设置非阻塞
+int setnonblocking(int fd) {
+	int old_option = fcntl(fd, F_GETFL);
+	int new_option = old_option | O_NONBLOCK;
+	fcntl(fd, F_SETFL, new_option);
+	return old_option;
+}	
+```
+
+**内核事件表注册新事件，开启EPOLLONESHOT，针对客户端连接的描述符，listenfd不用开启**
+	
+```cpp
+//将内核事件表注册读事件，EF模式，选择开启EPOLLONESHOT
+void addfd(int epollfd, int fd, bool one_shot, int TRIGMode) {
+    epoll_event event;
+    event.data.fd = fd;
+
+    if (1 == TRIGMode)
+        event.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
+    else
+        event.events = EPOLLIN | EPOLLRDHUP;
+
+    if (one_shot)
+        event.events |= EPOLLONESHOT;
+    epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event);
+    setnonblocking(fd);
+}
+```	
+
+**内核事件表删除事件**
+
+```cpp
+//从内核时间表删除描述符
+void removefd(int epollfd, int fd) {
+    epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, 0);
+    close(fd);
+}
+```
+	
+**重置EPOLLONESHOT事件**
+
+```cpp
+//将事件重置为EPOLLONESHOT
+void modfd(int epollfd, int fd, int ev, int TRIGMode) {
+    epoll_event event;
+    event.data.fd = fd;
+
+    if (1 == TRIGMode)
+        event.events = ev | EPOLLET | EPOLLONESHOT | EPOLLRDHUP;
+    else
+        event.events = ev | EPOLLONESHOT | EPOLLRDHUP;
+
+    epoll_ctl(epollfd, EPOLL_CTL_MOD, fd, &event);
+}
+```
+
+**服务器接收http请求**
+	
+	
+	
+	
+	
+	
+	
+
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
 ![image](https://user-images.githubusercontent.com/81791654/170648325-c2101de6-e6de-4ead-a1f9-891421eab2b3.png)
 	
 ![image](https://user-images.githubusercontent.com/81791654/170648708-f6d9d606-ee4e-4ed1-8f79-a29d2cf04b12.png)
