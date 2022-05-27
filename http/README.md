@@ -195,7 +195,9 @@ HTTP响应也由四个部分组成，分别是：状态行、消息报头、空�
 
 ![image](https://user-images.githubusercontent.com/81791654/170452323-d60dc672-f583-48a1-9c41-895058efa966.png)
 
+
 ![image](https://user-images.githubusercontent.com/81791654/170452348-274a6d23-68f4-4abc-b848-0671dcdb8d7a.png)
+
 
 ![image](https://user-images.githubusercontent.com/81791654/170452565-faf214ab-3216-4e1f-98f0-c482eaa1012f.png)
 
@@ -456,6 +458,8 @@ void modfd(int epollfd, int fd, int ev, int TRIGMode) {
 
 **服务器接收http请求**
 	
+浏览器端发出http连接请求，主线程创建http对象接收请求并将所有数据读入对应buffer，将该对象插入任务队列，工作线程从任务队列中取出一个任务进行处理。
+
 	
 	
 	
