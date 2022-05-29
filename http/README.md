@@ -783,7 +783,106 @@ http_conn::HTTP_CODE http_conn::parse_request_line(char* text)
 
 * content-length字段，这里用于读取post请求的消息体长度	
 
+**parse_headers函数**
 	
+```cpp
+//解析http请求的一个头部信息
+http_conn::HTTP_CODE http_conn::parse_headers(char* text)
+{
+    //判断是空行还是请求头
+    if (text[0] == '\0')
+    {
+        //判断是GET还是POST请求
+        if (m_content_length != 0)
+        {
+            //POST需要跳转到消息体处理状态
+            m_check_state = CHECK_STATE_CONTENT;
+            return NO_REQUEST;
+        }
+        return GET_REQUEST;
+    }
+    //解析请求头部连接字段
+    else if (strncasecmp(text, "Connection:", 11) == 0)
+    {
+        text += 11;
+        //跳过空格和\t字符
+        text += strspn(text, " \t");
+        if (strcasecmp(text, "keep-alive") == 0)
+        {
+            //如果是长连接，则将linger标志设置为true
+            m_linger = true;
+        }
+    }
+    //解析请求头部内容长度字段
+    else if (strncasecmp(text, "Content-length:", 15) == 0)
+    {
+        text += 15;
+        text += strspn(text, " \t");
+        m_content_length = atol(text);
+    }
+    //解析请求头部HOST字段
+    else if (strncasecmp(text, "Host:", 5) == 0)
+    {
+        text += 5;
+        text += strspn(text, " \t");
+        m_host = text;
+    }
+    else
+    {
+        //printf("oop!unknow header: %s\n",text);
+        LOG_INFO("oop!unknow header: %s", text);
+        Log::get_instance()->flush();
+    }
+    return NO_REQUEST;
+}	
+```
+
+如果仅仅是GET请求，如项目中的欢迎界面，那么主状态机只设置之前的两个状态足矣。
+
+GET和POST请求报文的区别之一是有无消息体部分，GET请求没有消息体，当解析完空行之后，便完成了报文的解析。	
+	
+但后续的登录和注册功能，为了避免将用户名和密码直接暴露在URL中，我们在项目中改用了POST请求，将用户名和密码添加在报文中作为消息体进行了封装。
+
+为此，我们需要在解析报文的部分添加解析消息体的模块。
+	
+```cpp
+while((m_check_state==CHECK_STATE_CONTENT && line_status==LINE_OK)||((line_status=parse_line())==LINE_OK))
+```	
+那么，这里的判断条件为什么要写成这样呢？
+
+在GET请求报文中，每一行都是\r\n作为结束，所以对报文进行拆解时，仅用从状态机的状态line_status=parse_line())==LINE_OK语句即可。
+
+但，在POST请求报文中，消息体的末尾没有任何字符，所以不能使用从状态机的状态，这里转而使用主状态机的状态作为循环入口条件。
+
+**那后面的&& line_status==LINE_OK又是为什么？**
+
+解析完消息体后，报文的完整解析就完成了，但此时主状态机的状态还是CHECK_STATE_CONTENT，也就是说，符合循环入口条件，还会再次进入循环，这并不是我们所希望的。
+
+为此，增加了该语句，并在完成消息体解析后，将line_status变量更改为LINE_OPEN，此时可以跳出循环，完成报文解析任务。
+
+**CHECK_STATE_CONTENT**
+
+* 仅用于解析POST请求，调用parse_content函数解析消息体
+
+* 用于保存post请求消息体，为后面的登录和注册做准备
+	
+```cpp
+//判断http请求是否被完整读入
+http_conn::HTTP_CODE http_conn::parse_content(char* text)
+{
+    //判断buffer中是否读取了消息体
+    if (m_read_idx >= (m_content_length + m_checked_idx))
+    {
+        text[m_content_length] = '\0';
+        //POST请求中最后为输入的用户名和密码
+        m_string = text;
+        return GET_REQUEST;
+    }
+    return NO_REQUEST;
+}	
+```	
+
+状态机和HTTP报文解析是项目中最繁琐的部分。	
 	
 **epoll相关代码**
 	
