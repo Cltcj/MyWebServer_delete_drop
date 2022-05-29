@@ -255,4 +255,4 @@ clock属性：
 
 >`CLOCK_THREAD_CPUTIME_ID`: 调用线程的CPU时间
 
-[参考两猿社 01 线程同步机制封装类](https://mp.weixin.qq.com/s?__biz=MzAxNzU2MzcwMw==&mid=2649274278&idx=3&sn=5840ff698e3f963c7855d702e842ec47&chksm=83ffbefeb48837e86fed9754986bca6db364a6fe2e2923549a378e8e5dec6e3cf732cdb198e2&scene=178&cur_album_id=1339230165934882817#rd)
+
