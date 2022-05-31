@@ -15,7 +15,7 @@
 
 [1、三种线程同步机制的封装](https://github.com/Cltcj/MyWebServer/tree/main/lock)
 
-[2、线程池](https://github.com/Cltcj/MyWebServer/tree/main/threadpool
+[2、线程池](https://github.com/Cltcj/MyWebServer/tree/main/threadpool)
 
 [3、http连接处理](https://github.com/Cltcj/MyWebServer/tree/main/http)
 
