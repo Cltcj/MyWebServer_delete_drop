@@ -1,6 +1,6 @@
 ## HTTP—Hyper Text Transfer Protocol（超文本传输协议）
 
-这一部分涉及[多路I/O技术](https://github.com/Cltcj/MyWebServer/blob/main/%E5%A4%9A%E8%B7%AFIO%E6%8A%80%E6%9C%AF/README.md)
+这一部分涉及[多路I/O技术](https://github.com/Cltcj/MyWebServer/tree/main/%E5%A4%9A%E8%B7%AFIO%E6%8A%80%E6%9C%AF)
 
 HTTP（HyperText Transfer Protocol，超文本传输协议）是一种用于分布式、协作式和超媒体信息系统的应用层协议。HTTP 是万维网的数据通信的基础。
 
