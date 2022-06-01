@@ -267,11 +267,11 @@ private:
 &emsp;&emsp;这一部分涉及[多路I/O技术](https://github.com/Cltcj/MyWebServer/tree/main/%E5%A4%9A%E8%B7%AFIO%E6%8A%80%E6%9C%AF)
 可以自行了解
 	
-**① 首先对epoll相关代码进行整理**
+**1、首先对epoll相关代码进行整理**
 	
 此项目中epoll相关代码部分包括非阻塞模式、内核事件表注册事件、删除事件、重置EPOLLONESHOT事件四种。
 	
-* 1、设置文件描述符状态
+* ① 设置文件描述符状态
 
 &emsp;&emsp;fcntl可将一个socket设置成非阻塞模式，在修改文件描述符标志或文件状态标志时必须谨慎，先要取得现在的标志值，然后按照希望修改它，最后设置新标志值。不能只是执行F_SETFD或F_SETFL命令，这样会关闭以前设置的标志位。下面一段代码表示如何设置阻塞和非阻塞模式：
 
@@ -293,7 +293,7 @@ int setnonblocking(int fd)
 }	
 ```	
 
-* 2、内核事件表注册新事件
+* ② 内核事件表注册新事件
 	
 &emsp;&emsp;epoll_event的作用是什么？我们知道epoll_wait函数能获取是否有注册事件发生，但这个事件到底是什么、从哪个 socket 来、发送的时间、包的大小等等信息，都不知道。这就好比一个人在黑黢黢的山洞里，只能听到声响，至于这个声音是谁发出的根本不知道。因此我们就需要struct epoll_event来帮助我们读取信息。
 
@@ -330,7 +330,7 @@ void addfd(int epollfd, int fd, bool one_shot)
 }
 ```
 
-* 3、内核事件表删除事件
+* ③ 内核事件表删除事件
 
 ```cpp
 //从内核时间表删除描述符
@@ -340,7 +340,7 @@ void removefd(int epollfd, int fd) {
 }
 ```
 	
-* 4、重置EPOLLONESHOT事件
+* ④ 重置EPOLLONESHOT事件
 
 ```cpp
 //将事件重置为EPOLLONESHOT
@@ -362,39 +362,12 @@ void modfd(int epollfd, int fd, int ev)
 ```	
 	
 	
-② 第二是http请求接收部分
+**2、读取浏览器（客户端）发送来的请求报文**
 
-&emsp;&emsp;这部分会涉及到init和read_once函数，但init仅仅是对私有成员变量进行初始化:
+&emsp;&emsp;主要涉及到http_conn::read_once()函数：
 
-**init函数**
-```cpp
-//初始化新接受的连接
-//check_state默认为分析请求行状态
-void http_conn::init()
-{
-    mysql = NULL;
-    bytes_to_send = 0;
-    bytes_have_send = 0;
-    m_check_state = CHECK_STATE_REQUESTLINE;
-    m_linger = false;
-    m_method = GET;
-    m_url = 0;
-    m_version = 0;
-    m_content_length = 0;
-    m_host = 0;
-    m_start_line = 0;
-    m_checked_idx = 0;
-    m_read_idx = 0;
-    m_write_idx = 0;
-    cgi = 0;
-    memset(m_read_buf, '\0', READ_BUFFER_SIZE);
-    memset(m_write_buf, '\0', WRITE_BUFFER_SIZE);
-    memset(m_real_file, '\0', FILENAME_LEN);
-}	
-```
+
 read_once读取浏览器端发送来的请求报文，直到无数据可读或对方关闭连接，读取到m_read_buffer中，并更新m_read_idx。
-	
-**read_once函数**	
 	
 ```cpp	
 //循环读取客户数据，直到无数据可读或对方关闭连接
@@ -442,13 +415,13 @@ bool http_conn::read_once()
 }	
 ```	
 
-**③ 服务器接收客户端（浏览器）发来的http请求报文**
+**3、服务器接收客户端（浏览器）发来的http请求报文**
 		       
-上面，浏览器端发出http连接请求，主线程创建http对象接收请求并将所有数据读入对应buffer，将该对象插入任务队列，工作线程从任务队列中取出一个任务进行处理。
+浏览器端发出http连接请求，主线程创建http对象接收请求并将所有数据读入对应buffer，将该对象插入任务队列，工作线程从任务队列中取出一个任务进行处理。
 
-既然浏览器发送了请求报文，那么Web服务器就需要接收客户端（浏览器）发来的请求报文，所以要考虑的一个问题就是Web服务器如何接收客户端发来的HTTP请求报文呢?
+这里，既然浏览器发送了请求报文，那么Web服务器就需要接收客户端（浏览器）发来的请求报文，所以要考虑的一个问题就是Web服务器如何接收客户端发来的HTTP请求报文呢?
 
-Web服务器端通过socket监听来自用户的请求：
+首先Web服务器端通过socket监听来自用户的请求，下面这段监听listen socket的代码基本就是通用公式：
 
 ```cpp		       
 int listenfd = socket(PF_INET, SOCK_STREAM, 0);
@@ -475,15 +448,17 @@ assert(ret >= 0);
 		       
 &emsp;&emsp;远端的很多用户会尝试去connect()这个WebServer上正在listen的这个port，而监听到的这些连接会排队等待被accept()。由于用户连接请求是随机到达的异步事件，每当监听socket（listenfd）listen到新的客户连接并且放入监听队列，我们都需要告诉我们的Web服务器有连接来了，accept这个连接，并分配一个逻辑单元来处理这个用户请求。而且，我们在处理这个请求的同时，还需要继续监听其他客户的请求并分配其另一逻辑单元来处理（并发，同时处理多个事件，后面会提到使用线程池实现并发）。这里，服务器通过epoll这种I/O复用技术（还有select和poll）来实现对监听socket（listenfd）和连接socket（客户请求）的同时监听。注意I/O复用虽然可以同时监听多个文件描述符，但是它本身是阻塞的，并且当有多个文件描述符同时就绪的时候，如果不采取额外措施，程序则只能按顺序处理其中就绪的每一个文件描述符，所以为提高效率，我们将在这部分通过线程池来实现并发（多线程并发），为每个就绪的文件描述符分配一个逻辑单元（线程）来处理。
 
-
+首先通过addfd()在内核事件表注册新事件，开启EPOLLONESHOT
 	
 ```cpp		       
-//创建内核事件表
+/* 用于存储epoll事件表中就绪事件的event数组 */
 epoll_event events[MAX_EVENT_NUMBER];
+	
+/* 创建一个额外的文件描述符来唯一标识内核中的epoll事件表 */
 epollfd = epoll_create(5);
 assert(epollfd != -1);
 		       
-//将listenfd放在epoll树上
+/* 主线程往epoll内核事件表中注册监听socket事件，当listen到新的客户连接时，listenfd变为就绪事件 */
 addfd(epollfd, listenfd, false);
 		       
 //将上述epollfd赋值给http类对象的m_epollfd属性
@@ -494,20 +469,21 @@ client_data* users_timer = new client_data[MAX_FD];
 
 while (!stop_server)
 {
+	/* 主线程调用epoll_wait等待一组文件描述符上的事件，并将当前所有就绪的epoll_event复制到events数组中 */
         //等待所监控文件描述符上有事件的产生
 	int number = epoll_wait(epollfd, events, MAX_EVENT_NUMBER, -1);
 	if (number < 0 && errno != EINTR)
 	{
 	    break;
 	}
-	//对所有就绪事件进行处理
+	/* 然后我们遍历这一数组以处理这些已经就绪的事件 */
 	for (int i = 0; i < number; i++)
 	{
-	    int sockfd = events[i].data.fd;
+	    int sockfd = events[i].data.fd;// 事件表中就绪的socket文件描述符
 
 	    //处理新到的客户连接
 	    if (sockfd == listenfd)
-	    {
+	    {// 当listen到新的用户连接，listenfd上则产生就绪事件
 		struct sockaddr_in client_address;
 		socklen_t client_addrlength = sizeof(client_address);
 #ifdef listenfdLT
@@ -571,45 +547,37 @@ while (!stop_server)
 	}
 }
 ```		       
-		       
-### 流程图与状态机
 
-&emsp;&emsp;从状态机负责读取报文的一行，主状态机负责对该行数据进行解析，主状态机内部调用从状态机，从状态机驱动主状态机。
+服务器程序通常需要处理三类事件：I/O事件，信号及定时事件。有两种事件处理模式：
 
-![image](https://user-images.githubusercontent.com/81791654/170871894-d528b56a-a53a-4b64-afb3-b2bfead01695.png)
+* Reactor模式：要求主线程（I/O处理单元）只负责监听文件描述符上是否有事件发生（可读、可写），若有，则立即通知工作线程（逻辑单元），将socket可读可写事件放入请求队列，交给工作线程处理。
 
-**主状态机**
-		       
-三种状态，标识解析位置。
+* Proactor模式：将所有的I/O操作都交给主线程和内核来处理（进行读、写），工作线程仅负责处理逻辑，如主线程读完成后users[sockfd].read()，选择一个工作线程来处理客户请求pool->append(users + sockfd)。
 
-* CHECK_STATE_REQUESTLINE，解析请求行
+通常使用同步I/O模型（如epoll_wait）实现Reactor，使用异步I/O（如aio_read和aio_write）实现Proactor。但在此项目中，我们使用的是同步I/O模拟的Proactor事件处理模式。
 
-* CHECK_STATE_HEADER，解析请求头
+**3、Web服务器处理以及响应接收到的HTTP请求报文
 
-* CHECK_STATE_CONTENT，解析消息体，仅用于解析POST请求	
+上面以及讲完浏览器（客户端）发生请求报文，服务器接收和读取浏览器发送过来的请求报文，那么接收并读取请求报文之后我们需要做啥呢？应该说是服务器应该做什么呢？没错，服务器此时很定是要对请求报文处理以及响应。
+	
+该项目使用线程池（半同步半反应堆模式）并发处理用户请求，主线程负责读写，工作线程（线程池中的线程）负责处理逻辑（HTTP请求报文的解析等等）。通过之前的代码，我们将listenfd上到达的connection通过 accept()接收，并返回一个新的socket文件描述符connfd用于和用户通信，并对用户请求返回响应，同时将这个connfd注册到内核事件表中，等用户发来请求报文。
+	
+这个过程是：通过epoll_wait发现这个connfd上有可读事件了（EPOLLIN），主线程就将这个HTTP的请求报文读进这个连接socket的读缓存中users[sockfd].read_once()，然后将该任务对象（指针）插入线程池的请求队列中pool->append(users + sockfd);，线程池的实现还需要依靠锁机制以及信号量机制来实现线程同步，保证操作的原子性。
 
-**从状态机**
+```cpp
+ //处理客户连接上接收到的数据
+else if (events[i].events & EPOLLIN)
+{
+	util_timer* timer = users_timer[sockfd].timer;
+	if (users[sockfd].read_once())
+	{
+	    //若监测到读事件，将该事件放入请求队列
+	    pool->append(users + sockfd);
+}	
+```
 
-三种状态，标识解析一行的读取状态。
+OK，接下来说说每个read_once()后的HTTP请求是如何被处理的，我们直接看这个处理HTTP请求的入口函数：	
 
-* LINE_OK，完整读取一行
-
-* LINE_BAD，报文语法有误
-
-* LINE_OPEN，读取的行不完整
-
-**代码分析-http报文解析**
-
-&emsp;&emsp;前面介绍了服务器接收http请求的流程与细节，简单来讲，浏览器端发出http连接请求，服务器端主线程创建http对象接收请求并将所有数据读入对应buffer，将该对象插入任务队列后，工作线程从任务队列中取出一个任务进行处理。	       
-		       
-&emsp;&emsp;各子线程通过process函数对任务进行处理，调用process_read函数和process_write函数分别完成报文解析与报文响应两个任务。
-		       
-可以看出，这里将process()的实现做了两个划分，我们将response改为write(因为回应的本质是向回写)然后并入process()中，使整个逻辑更加完整。
-
-void的修饰不是强制的，你可以写成bool，int，或者自己宏定义，用于判断处理成功与否。
-
-read和write分工操作其实是为了以后的线程池和epoll，这里按下不表。接下来，讲一下如何实现两个不同的功能
-		       
 ```cpp
 void http_conn::process() {
     HTTP_CODE read_ret = process_read();
@@ -628,26 +596,132 @@ void http_conn::process() {
     //注册并监听写事件
     modfd(m_epollfd, m_sockfd, EPOLLOUT);
 }
-```	
-**HTTP_CODE含义**		       
+```
+	
+首先，process_read()，也就是对我们读入该connfd读缓冲区的请求报文进行解析。
+	
+HTTP请求报文由请求行（request line）、请求头部（header）、空行和请求数据四个部分组成：
 
-&emsp;&emsp;表示HTTP请求的处理结果，在头文件中初始化了八种情形，在报文解析时只涉及到四种。
 
-**NO_REQUEST**
+详细的讲是：从状态机负责读取报文的一行，主状态机负责对该行数据进行解析，主状态机内部调用从状态机，从状态机驱动主状态机。
 
-* 请求不完整，需要继续读取请求报文数据
+![image](https://user-images.githubusercontent.com/81791654/170871894-d528b56a-a53a-4b64-afb3-b2bfead01695.png)
 
-**GET_REQUEST**
 
-* 获得了完整的HTTP请求
+process_read通过while循环，将主从状态机进行封装，对报文的每一行进行循环处理，其作用就是将类似上述例子的请求报文进行解析，因为用户的请求内容包含在这个请求报文里面，只有通过解析，知道用户请求的内容是什么，是请求图片，还是视频，或是其他请求，我们根据这些请求返回相应的HTML页面等。项目中使用主从状态机的模式进行解析，从状态机（parse_line）负责读取报文的一行，主状态机负责对该行数据进行解析，主状态机内部调用从状态机，从状态机驱动主状态机。每解析一部分都会将整个请求的m_check_state状态改变，状态机也就是根据这个状态来进行不同部分的解析跳转的：
+	
 
-**BAD_REQUEST**
+判断条件
 
-* HTTP请求报文有语法错误
+* 主状态机转移到CHECK_STATE_CONTENT，该条件涉及解析消息体
 
-**INTERNAL_ERROR**
+* 从状态机转移到LINE_OK，该条件涉及解析请求行和请求头部
 
-* 服务器内部错误，该结果在主状态机逻辑switch的default下，一般不会触发		       
+* 两者为或关系，当条件为真则继续循环，否则退出
+
+循环体
+
+* 从状态机读取数据
+
+* 调用get_line函数，通过m_start_line将从状态机读取数据间接赋给text
+
+* 主状态机解析text
+
+```cpp
+http_conn::HTTP_CODE http_conn::process_read()
+{
+    LINE_STATUS line_status = LINE_OK;
+    HTTP_CODE ret = NO_REQUEST;
+    char* text = 0;
+
+    while ((m_check_state == CHECK_STATE_CONTENT && line_status == LINE_OK) || ((line_status = parse_line()) == LINE_OK))
+    {
+        text = get_line();
+        m_start_line = m_checked_idx;
+        LOG_INFO("%s", text);
+        Log::get_instance()->flush();
+        switch (m_check_state)
+        {
+        case CHECK_STATE_REQUESTLINE:
+        {
+            ret = parse_request_line(text);
+            if (ret == BAD_REQUEST)
+                return BAD_REQUEST;
+            break;
+        }
+        case CHECK_STATE_HEADER:
+        {
+            ret = parse_headers(text);
+            if (ret == BAD_REQUEST)
+                return BAD_REQUEST;
+            else if (ret == GET_REQUEST)
+            {
+                return do_request();
+            }
+            break;
+        }
+        case CHECK_STATE_CONTENT:
+        {
+            ret = parse_content(text);
+            if (ret == GET_REQUEST)
+                return do_request();
+            line_status = LINE_OPEN;
+            break;
+        }
+        default:
+            return INTERNAL_ERROR;
+        }
+    }
+    return NO_REQUEST;
+}
+```
+
+		       	       
+parse_request_line()通过请求行的解析我们可以判断该HTTP请求的类型（GET/POST），而请求行中最重要的部分就是URL部分，我们会将这部分保存下来用于后面的生成HTTP响应。
+	
+
+
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
+	
 	
 ### 解析报文整体流程
 		       
