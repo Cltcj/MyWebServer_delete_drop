@@ -266,12 +266,19 @@ private:
 	
 &emsp;&emsp;这一部分涉及[多路I/O技术](https://github.com/Cltcj/MyWebServer/tree/main/%E5%A4%9A%E8%B7%AFIO%E6%8A%80%E6%9C%AF)
 可以自行了解
-	
-① 这里采用主、从两个有限状态机实现了最简单的HTTP请求的读取和分析。
-	
-**设置文件描述符状态**
 
-&emsp;&emsp;fcntl可将一个socket设置成非阻塞模式，在修改文件描述符标志或文件状态标志时必须谨慎，先要取得现在的标志值，然后按照希望修改它，最后设置新标志值。不能只是执行F_SETFD或F_SETFL命令，这样会关闭以前设置的标志位。
+	
+
+	
+	
+	
+① 首先对epoll相关代码进行整理
+
+此项目中epoll相关代码部分包括非阻塞模式、内核事件表注册事件、删除事件、重置EPOLLONESHOT事件四种。
+	
+* 1、设置文件描述符状态
+
+&emsp;&emsp;fcntl可将一个socket设置成非阻塞模式，在修改文件描述符标志或文件状态标志时必须谨慎，先要取得现在的标志值，然后按照希望修改它，最后设置新标志值。不能只是执行F_SETFD或F_SETFL命令，这样会关闭以前设置的标志位。下面一段代码表示如何设置阻塞和非阻塞模式：
 
 ```cpp
 flags = fcntl(sockfd, F_GETFL, 0); //获取文件的flags值。
@@ -280,7 +287,87 @@ flags  = fcntl(sockfd,F_GETFL,0);
 fcntl(sockfd,F_SETFL,flags&~O_NONBLOCK); //设置成阻塞模式；	
 ```
 	
+```cpp
+//对文件描述符设置非阻塞
+int setnonblocking(int fd)
+{
+    int old_option = fcntl(fd, F_GETFL);
+    int new_option = old_option | O_NONBLOCK;
+    fcntl(fd, F_SETFL, new_option);
+    return old_option;
+}	
+```	
+
+* 2、内核事件表注册新事件
 	
+&emsp;&emsp;epoll_event的作用是什么？我们知道epoll_wait函数能获取是否有注册事件发生，但这个事件到底是什么、从哪个 socket 来、发送的时间、包的大小等等信息，都不知道。这就好比一个人在黑黢黢的山洞里，只能听到声响，至于这个声音是谁发出的根本不知道。因此我们就需要struct epoll_event来帮助我们读取信息。
+
+&emsp;&emsp;epoll_event 结构体的定义如上所示，分为 events 和 data 两个部分。其中events 是 epoll 注册的事件，比如EPOLLIN、EPOLLOUT等等，这个参数在epoll_ctl注册事件时，可以明确告知注册事件的类型。data 是一个联合体，它一般是用来传递参数。
+
+	
+```cpp
+//将内核事件表注册读事件，ET模式，选择开启EPOLLONESHOT，针对客户端连接的描述符，listenfd不用开启
+void addfd(int epollfd, int fd, bool one_shot)
+{
+    epoll_event event;
+    event.data.fd = fd;
+
+#ifdef connfdET
+    event.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
+#endif
+
+#ifdef connfdLT
+    event.events = EPOLLIN | EPOLLRDHUP;
+#endif
+
+#ifdef listenfdET
+    event.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
+#endif
+
+#ifdef listenfdLT
+    event.events = EPOLLIN | EPOLLRDHUP;
+#endif
+
+    if (one_shot)
+        event.events |= EPOLLONESHOT;
+    epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event);
+    setnonblocking(fd);
+}
+```
+
+* 3、内核事件表删除事件
+
+```cpp
+//从内核时间表删除描述符
+void removefd(int epollfd, int fd) {
+    epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, 0);
+    close(fd);
+}
+```
+	
+* 4、重置EPOLLONESHOT事件
+
+```cpp
+//将事件重置为EPOLLONESHOT
+void modfd(int epollfd, int fd, int ev)
+{
+    epoll_event event;
+    event.data.fd = fd;
+
+#ifdef connfdET
+    event.events = ev | EPOLLET | EPOLLONESHOT | EPOLLRDHUP;
+#endif
+
+#ifdef connfdLT
+    event.events = ev | EPOLLONESHOT | EPOLLRDHUP;
+#endif
+
+    epoll_ctl(epollfd, EPOLL_CTL_MOD, fd, &event);
+}
+```	
+	
+	
+① 采用主、从两个有限状态机实现了最简单的HTTP请求的读取和分析。	
 	
 	
 在http请求接收部分，会涉及到init和read_once函数，但init仅仅是对私有成员变量进行初始化:
@@ -794,68 +881,8 @@ http_conn::HTTP_CODE http_conn::parse_content(char* text)
 
 状态机和HTTP报文解析是项目中最繁琐的部分。	
 	
-**epoll相关代码**
-	
-项目中epoll相关代码部分包括非阻塞模式、内核事件表注册事件、删除事件、重置EPOLLONESHOT事件四种。
 
-* 非阻塞模式
 
-```cpp
-//对文件描述符设置非阻塞
-int setnonblocking(int fd) {
-	int old_option = fcntl(fd, F_GETFL);
-	int new_option = old_option | O_NONBLOCK;
-	fcntl(fd, F_SETFL, new_option);
-	return old_option;
-}	
-```
-
-**内核事件表注册新事件，开启EPOLLONESHOT，针对客户端连接的描述符，listenfd不用开启**
-	
-```cpp
-//将内核事件表注册读事件，EF模式，选择开启EPOLLONESHOT
-void addfd(int epollfd, int fd, bool one_shot, int TRIGMode) {
-    epoll_event event;
-    event.data.fd = fd;
-
-    if (1 == TRIGMode)
-        event.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
-    else
-        event.events = EPOLLIN | EPOLLRDHUP;
-
-    if (one_shot)
-        event.events |= EPOLLONESHOT;
-    epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event);
-    setnonblocking(fd);
-}
-```	
-
-**内核事件表删除事件**
-
-```cpp
-//从内核时间表删除描述符
-void removefd(int epollfd, int fd) {
-    epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, 0);
-    close(fd);
-}
-```
-	
-**重置EPOLLONESHOT事件**
-
-```cpp
-//将事件重置为EPOLLONESHOT
-void modfd(int epollfd, int fd, int ev, int TRIGMode) {
-    epoll_event event;
-    event.data.fd = fd;
-
-    if (1 == TRIGMode)
-        event.events = ev | EPOLLET | EPOLLONESHOT | EPOLLRDHUP;
-    else
-        event.events = ev | EPOLLONESHOT | EPOLLRDHUP;
-
-    epoll_ctl(epollfd, EPOLL_CTL_MOD, fd, &event);
-}
-```
 
 **服务器接收http请求**
 	
