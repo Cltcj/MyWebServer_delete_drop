@@ -266,14 +266,9 @@ private:
 	
 &emsp;&emsp;这一部分涉及[多路I/O技术](https://github.com/Cltcj/MyWebServer/tree/main/%E5%A4%9A%E8%B7%AFIO%E6%8A%80%E6%9C%AF)
 可以自行了解
-
 	
-
+**① 首先对epoll相关代码进行整理**
 	
-	
-	
-① 首先对epoll相关代码进行整理
-
 此项目中epoll相关代码部分包括非阻塞模式、内核事件表注册事件、删除事件、重置EPOLLONESHOT事件四种。
 	
 * 1、设置文件描述符状态
@@ -367,10 +362,9 @@ void modfd(int epollfd, int fd, int ev)
 ```	
 	
 	
-① 采用主、从两个有限状态机实现了最简单的HTTP请求的读取和分析。	
-	
-	
-在http请求接收部分，会涉及到init和read_once函数，但init仅仅是对私有成员变量进行初始化:
+② 第二是http请求接收部分
+
+&emsp;&emsp;这部分会涉及到init和read_once函数，但init仅仅是对私有成员变量进行初始化:
 
 **init函数**
 ```cpp
@@ -401,6 +395,7 @@ void http_conn::init()
 read_once读取浏览器端发送来的请求报文，直到无数据可读或对方关闭连接，读取到m_read_buffer中，并更新m_read_idx。
 	
 **read_once函数**	
+	
 ```cpp	
 //循环读取客户数据，直到无数据可读或对方关闭连接
 //非阻塞ET工作模式下，需要一次性将数据读完
@@ -431,7 +426,7 @@ bool http_conn::read_once()
     {
         bytes_read = recv(m_sockfd, m_read_buf + m_read_idx, READ_BUFFER_SIZE - m_read_idx, 0);
         if (bytes_read == -1)
-        {
+        {//非阻塞ET模式下，需要一次性将数据读完
             if (errno == EAGAIN || errno == EWOULDBLOCK)
                 break;
             return false;
@@ -447,6 +442,136 @@ bool http_conn::read_once()
 }	
 ```	
 
+**③ 服务器接收客户端（浏览器）发来的http请求报文**
+		       
+上面，浏览器端发出http连接请求，主线程创建http对象接收请求并将所有数据读入对应buffer，将该对象插入任务队列，工作线程从任务队列中取出一个任务进行处理。
+
+既然浏览器发送了请求报文，那么Web服务器就需要接收客户端（浏览器）发来的请求报文，所以要考虑的一个问题就是Web服务器如何接收客户端发来的HTTP请求报文呢?
+
+Web服务器端通过socket监听来自用户的请求：
+
+```cpp		       
+int listenfd = socket(PF_INET, SOCK_STREAM, 0);
+assert(listenfd >= 0);
+
+//struct linger tmp={1,0};
+//SO_LINGER若有数据待发送，延迟关闭
+//setsockopt(listenfd,SOL_SOCKET,SO_LINGER,&tmp,sizeof(tmp));
+
+int ret = 0;
+struct sockaddr_in address;
+bzero(&address, sizeof(address));
+address.sin_family = AF_INET;
+address.sin_addr.s_addr = htonl(INADDR_ANY);
+address.sin_port = htons(port);
+
+int flag = 1;
+setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag));
+ret = bind(listenfd, (struct sockaddr*)&address, sizeof(address));
+assert(ret >= 0);
+ret = listen(listenfd, 5);
+assert(ret >= 0);
+```
+		       
+&emsp;&emsp;远端的很多用户会尝试去connect()这个WebServer上正在listen的这个port，而监听到的这些连接会排队等待被accept()。由于用户连接请求是随机到达的异步事件，每当监听socket（listenfd）listen到新的客户连接并且放入监听队列，我们都需要告诉我们的Web服务器有连接来了，accept这个连接，并分配一个逻辑单元来处理这个用户请求。而且，我们在处理这个请求的同时，还需要继续监听其他客户的请求并分配其另一逻辑单元来处理（并发，同时处理多个事件，后面会提到使用线程池实现并发）。这里，服务器通过epoll这种I/O复用技术（还有select和poll）来实现对监听socket（listenfd）和连接socket（客户请求）的同时监听。注意I/O复用虽然可以同时监听多个文件描述符，但是它本身是阻塞的，并且当有多个文件描述符同时就绪的时候，如果不采取额外措施，程序则只能按顺序处理其中就绪的每一个文件描述符，所以为提高效率，我们将在这部分通过线程池来实现并发（多线程并发），为每个就绪的文件描述符分配一个逻辑单元（线程）来处理。
+
+
+	
+```cpp		       
+//创建内核事件表
+epoll_event events[MAX_EVENT_NUMBER];
+epollfd = epoll_create(5);
+assert(epollfd != -1);
+		       
+//将listenfd放在epoll树上
+addfd(epollfd, listenfd, false);
+		       
+//将上述epollfd赋值给http类对象的m_epollfd属性
+http_conn::m_epollfd = epollfd;
+
+//创建MAX_FD个http类对象
+client_data* users_timer = new client_data[MAX_FD];
+
+while (!stop_server)
+{
+        //等待所监控文件描述符上有事件的产生
+	int number = epoll_wait(epollfd, events, MAX_EVENT_NUMBER, -1);
+	if (number < 0 && errno != EINTR)
+	{
+	    break;
+	}
+	//对所有就绪事件进行处理
+	for (int i = 0; i < number; i++)
+	{
+	    int sockfd = events[i].data.fd;
+
+	    //处理新到的客户连接
+	    if (sockfd == listenfd)
+	    {
+		struct sockaddr_in client_address;
+		socklen_t client_addrlength = sizeof(client_address);
+#ifdef listenfdLT
+		int connfd = accept(listenfd, (struct sockaddr*)&client_address, &client_addrlength);
+		if (connfd < 0)
+		{
+		    continue;
+		}
+		if (http_conn::m_user_count >= MAX_FD)
+		{
+		    show_error(connfd, "Internal server busy");
+		    continue;
+		}
+		users[connfd].init(connfd, client_address);
+#endif
+
+#ifdef listenfdET
+		//循环接收数据
+		while (1)
+		{
+		    int connfd = accept(listenfd, (struct sockaddr*)&client_address, &client_addrlength);
+		    if (connfd < 0)
+		    {
+			break;
+		    }
+		    if (http_conn::m_user_count >= MAX_FD)
+		    {
+			show_error(connfd, "Internal server busy");
+			break;
+		    }
+		    users[connfd].init(connfd, client_address);
+		}
+		continue;
+#endif
+	    }
+	    //处理异常事件
+	    else if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR))
+	    {
+		//服务器端关闭连接
+	    }
+
+	    //处理信号
+	    else if ((sockfd == pipefd[0]) && (events[i].events & EPOLLIN))
+	    {
+	    }
+
+	    //处理客户连接上接收到的数据
+	    else if (events[i].events & EPOLLIN)
+	    {
+		//读入对应缓冲区
+		if (users[sockfd].read_once())
+		{
+		    //若监测到读事件，将该事件放入请求队列
+		    pool->append(users + sockfd);
+		}
+		else
+		{
+			
+		}
+	    }    
+	}
+}
+```		       
+		       
 ### 流程图与状态机
 
 &emsp;&emsp;从状态机负责读取报文的一行，主状态机负责对该行数据进行解析，主状态机内部调用从状态机，从状态机驱动主状态机。
