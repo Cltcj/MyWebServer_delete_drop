@@ -556,7 +556,7 @@ while (!stop_server)
 
 通常使用同步I/O模型（如epoll_wait）实现Reactor，使用异步I/O（如aio_read和aio_write）实现Proactor。但在此项目中，我们使用的是同步I/O模拟的Proactor事件处理模式。
 
-**3、Web服务器处理以及响应接收到的HTTP请求报文
+**4、Web服务器处理以及响应接收到的HTTP请求报文**
 
 上面以及讲完浏览器（客户端）发生请求报文，服务器接收和读取浏览器发送过来的请求报文，那么接收并读取请求报文之后我们需要做啥呢？应该说是服务器应该做什么呢？没错，服务器此时很定是要对请求报文处理以及响应。
 	
@@ -597,19 +597,15 @@ void http_conn::process() {
     modfd(m_epollfd, m_sockfd, EPOLLOUT);
 }
 ```
+![image](https://user-images.githubusercontent.com/81791654/170871894-d528b56a-a53a-4b64-afb3-b2bfead01695.png)
 	
 首先，process_read()，也就是对我们读入该connfd读缓冲区的请求报文进行解析。
 	
-HTTP请求报文由请求行（request line）、请求头部（header）、空行和请求数据四个部分组成：
-
-
 详细的讲是：从状态机负责读取报文的一行，主状态机负责对该行数据进行解析，主状态机内部调用从状态机，从状态机驱动主状态机。
 
-![image](https://user-images.githubusercontent.com/81791654/170871894-d528b56a-a53a-4b64-afb3-b2bfead01695.png)
+**解析报文整体流程**
 
-
-process_read通过while循环，将主从状态机进行封装，对报文的每一行进行循环处理，其作用就是将类似上述例子的请求报文进行解析，因为用户的请求内容包含在这个请求报文里面，只有通过解析，知道用户请求的内容是什么，是请求图片，还是视频，或是其他请求，我们根据这些请求返回相应的HTML页面等。项目中使用主从状态机的模式进行解析，从状态机（parse_line）负责读取报文的一行，主状态机负责对该行数据进行解析，主状态机内部调用从状态机，从状态机驱动主状态机。每解析一部分都会将整个请求的m_check_state状态改变，状态机也就是根据这个状态来进行不同部分的解析跳转的：
-	
+process_read通过while循环，将主从状态机进行封装，对报文的每一行进行循环处理。
 
 判断条件
 
@@ -625,145 +621,22 @@ process_read通过while循环，将主从状态机进行封装，对报文的每
 
 * 调用get_line函数，通过m_start_line将从状态机读取数据间接赋给text
 
-* 主状态机解析text
+* 主状态机解析text	
 
 ```cpp
+//解析报文
 http_conn::HTTP_CODE http_conn::process_read()
 {
-    LINE_STATUS line_status = LINE_OK;
-    HTTP_CODE ret = NO_REQUEST;
-    char* text = 0;
-
-    while ((m_check_state == CHECK_STATE_CONTENT && line_status == LINE_OK) || ((line_status = parse_line()) == LINE_OK))
-    {
-        text = get_line();
-        m_start_line = m_checked_idx;
-        LOG_INFO("%s", text);
-        Log::get_instance()->flush();
-        switch (m_check_state)
-        {
-        case CHECK_STATE_REQUESTLINE:
-        {
-            ret = parse_request_line(text);
-            if (ret == BAD_REQUEST)
-                return BAD_REQUEST;
-            break;
-        }
-        case CHECK_STATE_HEADER:
-        {
-            ret = parse_headers(text);
-            if (ret == BAD_REQUEST)
-                return BAD_REQUEST;
-            else if (ret == GET_REQUEST)
-            {
-                return do_request();
-            }
-            break;
-        }
-        case CHECK_STATE_CONTENT:
-        {
-            ret = parse_content(text);
-            if (ret == GET_REQUEST)
-                return do_request();
-            line_status = LINE_OPEN;
-            break;
-        }
-        default:
-            return INTERNAL_ERROR;
-        }
-    }
-    return NO_REQUEST;
-}
-```
-
-		       	       
-parse_request_line()通过请求行的解析我们可以判断该HTTP请求的类型（GET/POST），而请求行中最重要的部分就是URL部分，我们会将这部分保存下来用于后面的生成HTTP响应。
-	
-
-
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-	
-### 解析报文整体流程
-		       
-process_read通过while循环，将主从状态机进行封装，对报文的每一行进行循环处理。
-
-**判断条件**
-
-* 主状态机转移到CHECK_STATE_CONTENT，该条件涉及解析消息体
-
-* 从状态机转移到LINE_OK，该条件涉及解析请求行和请求头部
-
-* 两者为或关系，当条件为真则继续循环，否则退出		       
-		       
-**循环体**
-
-* 从状态机读取数据
-
-* 调用get_line函数，通过m_start_line将从状态机读取数据间接赋给text
-
-* 主状态机解析text		       
-
-```cpp		       
-get_line函数
-//m_start_line是行在buffer中的起始位置，将该位置后面的数据赋给text
-//此时从状态机已提前将一行的末尾字符\r\n变为\0\0，所以text可以直接取出完整的行进行解析
-char* get_line() {
-    return m_read_buf+m_start_line;
-}
-```		       
-		       
-```cpp			       
-http_conn::HTTP_CODE http_conn::process_read() {
     //初始化从状态机状态、HTTP请求解析结果
     LINE_STATUS line_status = LINE_OK;
     HTTP_CODE ret = NO_REQUEST;
     char* text = 0;
 
-    //这里为什么要写两个判断条件？第一个判断条件为什么这样写？
-    //具体的在主状态机逻辑中会讲解。
     //parse_line为从状态机的具体实现
-    while ((m_check_state == CHECK_STATE_CONTENT && line_status == LINE_OK) || ((line_status = parse_line()) == LINE_OK)) {
-        text = get_line();
+    while ((m_check_state == CHECK_STATE_CONTENT && line_status == LINE_OK) || ((line_status = parse_line()) == LINE_OK))
+    {
+        text = get_line();//得到一行
+
         //m_start_line是每一个数据行在m_read_buf中的起始位置
         //m_checked_idx表示从状态机在m_read_buf中读取的位置
         m_start_line = m_checked_idx;
@@ -773,54 +646,49 @@ http_conn::HTTP_CODE http_conn::process_read() {
         //主状态机的三种状态转移逻辑
         switch (m_check_state)
         {
-            case CHECK_STATE_REQUESTLINE:
+        case CHECK_STATE_REQUESTLINE:
+        {
+            //解析请求行
+            ret = parse_request_line(text);
+            if (ret == BAD_REQUEST)
+                return BAD_REQUEST;
+            break;
+        }
+        case CHECK_STATE_HEADER:
+        {
+            //解析请求头
+            ret = parse_headers(text);
+            if (ret == BAD_REQUEST)
+                return BAD_REQUEST;
+            //完整解析GET请求后，跳转到报文响应函数
+            else if (ret == GET_REQUEST)
             {
-                //解析请求行
-                ret = parse_request_line(text);
-                if (ret == BAD_REQUEST)
-                    return BAD_REQUEST;
-                break;
+                return do_request();
             }
-            case CHECK_STATE_HEADER:
-            {
-                //解析请求头
-                ret = parse_headers(text);
-                if (ret == BAD_REQUEST)
-                    return BAD_REQUEST;
+            break;
+        }
+        case CHECK_STATE_CONTENT:
+        {
+            //解析消息体
+            ret = parse_content(text);
+            if (ret == GET_REQUEST)
+                return do_request();
 
-                //完整解析GET请求后，跳转到报文响应函数
-                else if (ret == GET_REQUEST)
-                {
-                    return do_request();
-                }
-                break;
-            }
-            case CHECK_STATE_CONTENT:
-            {
-                //解析消息体
-                ret = parse_content(text);
-
-                //完整解析POST请求后，跳转到报文响应函数
-                if (ret == GET_REQUEST)
-                    return do_request();
-
-                //解析完消息体即完成报文解析，避免再次进入循环，更新line_status
-                line_status = LINE_OPEN;
-                break;
-            }
-            default:
-                return INTERNAL_ERROR;
+            //解析完消息体即完成报文解析，避免再次进入循环，更新line_status
+            line_status = LINE_OPEN;
+            break;
+        }
+        default:
+            return INTERNAL_ERROR;
         }
     }
     return NO_REQUEST;
-}
-```		       
+}	
+```	
 
-### 从状态机逻辑
-
-&emsp;&emsp;在HTTP报文中，每一行的数据由\r\n作为结束字符，空行则是仅仅是字符\r\n。因此，可以通过查找\r\n将报文拆解成单独的行进行解析，项目中便是利用了这一点。
-
-&emsp;&emsp;从状态机负责读取buffer中的数据，将每行数据末尾的\r\n置为\0\0，并更新从状态机在buffer中读取的位置m_checked_idx，以此来驱动主状态机解析。
+**从状态机**
+	
+从状态机负责读取buffer中的数据，将每行数据末尾的\r\n置为\0\0，并更新从状态机在buffer中读取的位置m_checked_idx，以此来驱动主状态机解析。
 
 从状态机从m_read_buf中逐字节读取，判断当前字节是否为\r
 
@@ -828,24 +696,24 @@ http_conn::HTTP_CODE http_conn::process_read() {
 
 * 接下来达到了buffer末尾，表示buffer还需要继续接收，返回LINE_OPEN
 
-* 否则，表示语法错误，返回LINE_BAD	
+* 否则，表示语法错误，返回LINE_BAD
 
 当前字节不是\r，判断是否是\n（一般是上次读取到\r就到了buffer末尾，没有接收完整，再次接收时会出现这种情况）
 
 * 如果前一个字符是\r，则将\r\n修改成\0\0，将m_checked_idx指向下一行的开头，则返回LINE_OK
 
-当前字节既不是\r，也不是\n
+* 当前字节既不是\r，也不是\n
 
 * 表示接收不完整，需要继续接收，返回LINE_OPEN
-
+	
 ```cpp
 //从状态机，用于分析出一行内容
 //返回值为行的读取状态，有LINE_OK,LINE_BAD,LINE_OPEN
-//m_read_idx指向缓冲区m_read_buf的数据末尾的下一个字节
-//m_checked_idx指向从状态机当前正在分析的字节
 http_conn::LINE_STATUS http_conn::parse_line()
 {
     char temp;
+    //m_read_idx指向缓冲区m_read_buf的数据末尾的下一个字节
+    //m_checked_idx指向从状态机当前正在分析的字节
     for (; m_checked_idx < m_read_idx; ++m_checked_idx)
     {
         //temp为将要分析的字节
@@ -866,6 +734,7 @@ http_conn::LINE_STATUS http_conn::parse_line()
             //如果都不符合，则返回语法错误
             return LINE_BAD;
         }
+
         //如果当前字符是\n，也有可能读取到完整行
         //一般是上次读取到\r就到buffer末尾了，没有接收完整，再次接收时会出现这种情况
         else if (temp == '\n')
@@ -881,28 +750,30 @@ http_conn::LINE_STATUS http_conn::parse_line()
         }
     }
     //并没有找到\r\n，需要继续接收
-    return LINE_OPEN;
-}	
+    return LINE_OPEN;//没读完
+}
 ```
+	
+	
+**主状态机**
+	
+主状态机初始状态是CHECK_STATE_REQUESTLINE，通过调用从状态机来驱动主状态机，在主状态机进行解析前，从状态机已经将每一行的末尾\r\n符号改为\0\0，以便于主状态机直接取出对应字符串进行处理。
 
-### 主状态机逻辑
-
-&emsp;&emsp;主状态机初始状态是CHECK_STATE_REQUESTLINE，通过调用从状态机来驱动主状态机，在主状态机进行解析前，从状态机已经将每一行的末尾\r\n符号改为\0\0，以便于主状态机直接取出对应字符串进行处理。
-
-**CHECK_STATE_REQUESTLINE**
+CHECK_STATE_REQUESTLINE
 
 * 主状态机的初始状态，调用parse_request_line函数解析请求行
 
 * 解析函数从m_read_buf中解析HTTP请求行，获得请求方法、目标URL及HTTP版本号
 
-* 解析完成后主状态机的状态变为CHECK_STATE_HEADER
+* 解析完成后主状态机的状态变为CHECK_STATE_HEADER	
 
+* 请求行	
+  
 ```cpp	
 //解析http请求行，获得请求方法，目标url及http版本号
 http_conn::HTTP_CODE http_conn::parse_request_line(char* text)
 {
-    //在HTTP报文中，请求行用来说明请求类型,要访问的资源以及所使用的HTTP版本，
-    //其中各个部分之间通过\t或空格分隔。
+    //在HTTP报文中，请求行用来说明请求类型,要访问的资源以及所使用的HTTP版本，其中各个部分之间通过\t或空格分隔。
     //请求行中最先含有空格和\t任一字符的位置并返回
     m_url = strpbrk(text, " \t");
     //如果没有空格或\t，则报文格式有误
@@ -910,8 +781,10 @@ http_conn::HTTP_CODE http_conn::parse_request_line(char* text)
     {
         return BAD_REQUEST;
     }
+
     //将该位置改为\0，用于将前面数据取出
     *m_url++ = '\0';
+
     //取出数据，并通过与GET和POST比较，以确定请求方式
     char* method = text;
     if (strcasecmp(method, "GET") == 0)
@@ -923,16 +796,17 @@ http_conn::HTTP_CODE http_conn::parse_request_line(char* text)
     }
     else
         return BAD_REQUEST;
-
     //m_url此时跳过了第一个空格或\t字符，但不知道之后是否还有
     //将m_url向后偏移，通过查找，继续跳过空格和\t字符，指向请求资源的第一个字符
     m_url += strspn(m_url, " \t");
+
     //使用与判断请求方式的相同逻辑，判断HTTP版本号
     m_version = strpbrk(m_url, " \t");
     if (!m_version)
         return BAD_REQUEST;
     *m_version++ = '\0';
     m_version += strspn(m_version, " \t");
+
     //仅支持HTTP/1.1
     if (strcasecmp(m_version, "HTTP/1.1") != 0)
         return BAD_REQUEST;
@@ -963,11 +837,17 @@ http_conn::HTTP_CODE http_conn::parse_request_line(char* text)
     //请求行处理完毕，将主状态机转移处理请求头
     m_check_state = CHECK_STATE_HEADER;
     return NO_REQUEST;
-}	
-```	
-&emsp;&emsp;解析完请求行后，主状态机继续分析请求头。在报文中，请求头和空行的处理使用的同一个函数，这里通过判断当前的text首位是不是\0字符，若是，则表示当前处理的是空行，若不是，则表示当前处理的是请求头。
+}
+```
+parse_request_line()通过请求行的解析我们可以判断该HTTP请求的类型（GET/POST），而请求行中最重要的部分就是URL部分，我们会将这部分保存下来用于后面的生成HTTP响应。
 	
-**CHECK_STATE_HEADER**
+	
+* 解析请求头	
+	
+	
+解析完请求行后，主状态机继续分析请求头。在报文中，请求头和空行的处理使用的同一个函数，这里通过判断当前的text首位是不是\0字符，若是，则表示当前处理的是空行，若不是，则表示当前处理的是请求头。
+
+CHECK_STATE_HEADER
 
 * 调用parse_headers函数解析请求头部信息
 
@@ -977,10 +857,8 @@ http_conn::HTTP_CODE http_conn::parse_request_line(char* text)
 
 * connection字段判断是keep-alive还是close，决定是长连接还是短连接
 
-* content-length字段，这里用于读取post请求的消息体长度	
+* content-length字段，这里用于读取post请求的消息体长度
 
-**parse_headers函数**
-	
 ```cpp
 //解析http请求的一个头部信息
 http_conn::HTTP_CODE http_conn::parse_headers(char* text)
@@ -1025,44 +903,16 @@ http_conn::HTTP_CODE http_conn::parse_headers(char* text)
     }
     else
     {
-        //printf("oop!unknow header: %s\n",text);
         LOG_INFO("oop!unknow header: %s", text);
         Log::get_instance()->flush();
     }
     return NO_REQUEST;
-}	
-```
-
-如果仅仅是GET请求，如项目中的欢迎界面，那么主状态机只设置之前的两个状态足矣。
-
-GET和POST请求报文的区别之一是有无消息体部分，GET请求没有消息体，当解析完空行之后，便完成了报文的解析。	
-	
-但后续的登录和注册功能，为了避免将用户名和密码直接暴露在URL中，我们在项目中改用了POST请求，将用户名和密码添加在报文中作为消息体进行了封装。
-
-为此，我们需要在解析报文的部分添加解析消息体的模块。
-	
-```cpp
-while((m_check_state==CHECK_STATE_CONTENT && line_status==LINE_OK)||((line_status=parse_line())==LINE_OK))
+}
 ```	
-那么，这里的判断条件为什么要写成这样呢？
-
-在GET请求报文中，每一行都是\r\n作为结束，所以对报文进行拆解时，仅用从状态机的状态line_status=parse_line())==LINE_OK语句即可。
-
-但，在POST请求报文中，消息体的末尾没有任何字符，所以不能使用从状态机的状态，这里转而使用主状态机的状态作为循环入口条件。
-
-**那后面的&& line_status==LINE_OK又是为什么？**
-
-解析完消息体后，报文的完整解析就完成了，但此时主状态机的状态还是CHECK_STATE_CONTENT，也就是说，符合循环入口条件，还会再次进入循环，这并不是我们所希望的。
-
-为此，增加了该语句，并在完成消息体解析后，将line_status变量更改为LINE_OPEN，此时可以跳出循环，完成报文解析任务。
-
-**CHECK_STATE_CONTENT**
-
-* 仅用于解析POST请求，调用parse_content函数解析消息体
-
-* 用于保存post请求消息体，为后面的登录和注册做准备
 	
-```cpp
+* 解析消息体
+
+```cpp	
 //判断http请求是否被完整读入
 http_conn::HTTP_CODE http_conn::parse_content(char* text)
 {
@@ -1076,21 +926,163 @@ http_conn::HTTP_CODE http_conn::parse_content(char* text)
     }
     return NO_REQUEST;
 }	
-```	
+```
+	
+OK，经过上述解析，当得到一个完整的，正确的HTTP请求时，就到了do_request代码部分，我们需要首先对GET请求和不同POST请求（登录，注册，请求图片，视频等等）做不同的预处理，然后分析目标文件的属性，若目标文件存在、对所有用户可读且不是目录时，则使用mmap将其映射到内存地址m_file_address处，并告诉调用者获取文件成功。
 
-状态机和HTTP报文解析是项目中最繁琐的部分。	
-	
+**do_request**
 
+process_read函数的返回值是对请求的文件分析后的结果，一部分是语法错误导致的BAD_REQUEST，一部分是do_request的返回结果.该函数将网站根目录和url文件拼接，然后通过stat判断该文件属性。另外，为了提高访问速度，通过mmap进行映射，将普通文件映射到内存逻辑地址。
 
+为了更好的理解请求资源的访问流程，这里对各种各页面跳转机制进行简要介绍。其中，浏览器网址栏中的字符，即url，可以将其抽象成ip:port/xxx，xxx通过html文件的action属性进行设置。
 
-**服务器接收http请求**
-	
-浏览器端发出http连接请求，主线程创建http对象接收请求并将所有数据读入对应buffer，将该对象插入任务队列，工作线程从任务队列中取出一个任务进行处理。
+m_url为请求报文中解析出的请求资源，以/开头，也就是/xxx，项目中解析后的m_url有8种情况。
 
-	
-	
-	
-	
-	
-	
+![image](https://user-images.githubusercontent.com/81791654/171548591-09b720f9-0f99-47ed-b8b4-3c3cdf1a2c08.png)
 
+```cpp
+//网站根目录，文件夹内存放请求的资源和跳转的html文件
+const char* doc_root = "/home/qgy/github/TinyWebServer/root";	
+	
+http_conn::HTTP_CODE http_conn::do_request()
+{
+    //将初始化的m_real_file赋值为网站根目录
+    strcpy(m_real_file, doc_root);
+    int len = strlen(doc_root);
+    //printf("m_url:%s\n", m_url);
+    
+    //找到m_url中/的位置
+    const char* p = strrchr(m_url, '/');
+
+    //处理cgi，实现登录和注册校验
+    if (cgi == 1 && (*(p + 1) == '2' || *(p + 1) == '3'))
+    {
+
+        //根据标志判断是登录检测还是注册检测
+        char flag = m_url[1];
+
+        char* m_url_real = (char*)malloc(sizeof(char) * 200);
+        strcpy(m_url_real, "/");
+        strcat(m_url_real, m_url + 2);
+        strncpy(m_real_file + len, m_url_real, FILENAME_LEN - len - 1);
+        free(m_url_real);
+
+        //将用户名和密码提取出来
+        //user=123&passwd=123
+        char name[100], password[100];
+        int i;
+        for (i = 5; m_string[i] != '&'; ++i)
+            name[i - 5] = m_string[i];
+        name[i - 5] = '\0';
+
+        int j = 0;
+        for (i = i + 10; m_string[i] != '\0'; ++i, ++j)
+            password[j] = m_string[i];
+        password[j] = '\0';
+
+        //同步线程登录校验
+        if (*(p + 1) == '3')
+        {
+            //如果是注册，先检测数据库中是否有重名的
+            //没有重名的，进行增加数据
+            char* sql_insert = (char*)malloc(sizeof(char) * 200);
+            strcpy(sql_insert, "INSERT INTO user(username, passwd) VALUES(");
+            strcat(sql_insert, "'");
+            strcat(sql_insert, name);
+            strcat(sql_insert, "', '");
+            strcat(sql_insert, password);
+            strcat(sql_insert, "')");
+
+            if (users.find(name) == users.end())
+            {
+
+                m_lock.lock();
+                int res = mysql_query(mysql, sql_insert);
+                users.insert(pair<string, string>(name, password));
+                m_lock.unlock();
+
+                if (!res)
+                    strcpy(m_url, "/log.html");
+                else
+                    strcpy(m_url, "/registerError.html");
+            }
+            else
+                strcpy(m_url, "/registerError.html");
+        }
+        //如果是登录，直接判断
+        //若浏览器端输入的用户名和密码在表中可以查找到，返回1，否则返回0
+        else if (*(p + 1) == '2')
+        {
+            if (users.find(name) != users.end() && users[name] == password)
+                strcpy(m_url, "/welcome.html");
+            else
+                strcpy(m_url, "/logError.html");
+        }
+    }
+    //如果请求资源为/0，表示跳转注册界面
+    if (*(p + 1) == '0')
+    {
+        char* m_url_real = (char*)malloc(sizeof(char) * 200);
+        strcpy(m_url_real, "/register.html");
+        strncpy(m_real_file + len, m_url_real, strlen(m_url_real));
+
+        free(m_url_real);
+    }
+    //如果请求资源为/1，表示跳转登录界面
+    else if (*(p + 1) == '1')
+    {
+        char* m_url_real = (char*)malloc(sizeof(char) * 200);
+        strcpy(m_url_real, "/log.html");
+        //将网站目录和/log.html进行拼接，更新到m_real_file中
+        strncpy(m_real_file + len, m_url_real, strlen(m_url_real));
+
+        free(m_url_real);
+    }
+    else if (*(p + 1) == '5')
+    {//图片
+        char* m_url_real = (char*)malloc(sizeof(char) * 200);
+        strcpy(m_url_real, "/picture.html");
+        strncpy(m_real_file + len, m_url_real, strlen(m_url_real));
+
+        free(m_url_real);
+    }
+    else if (*(p + 1) == '6')
+    {//video
+        char* m_url_real = (char*)malloc(sizeof(char) * 200);
+        strcpy(m_url_real, "/video.html");
+        strncpy(m_real_file + len, m_url_real, strlen(m_url_real));
+
+        free(m_url_real);
+    }
+    else if (*(p + 1) == '7')
+    {//fans
+        char* m_url_real = (char*)malloc(sizeof(char) * 200);
+        strcpy(m_url_real, "/fans.html");
+        strncpy(m_real_file + len, m_url_real, strlen(m_url_real));
+
+        free(m_url_real);
+    }
+    else
+        //如果以上均不符合，即不是登录和注册，直接将url与网站目录拼接
+        //这里的情况是welcome界面，请求服务器上的一个图片
+        strncpy(m_real_file + len, m_url, FILENAME_LEN - len - 1);
+    
+    //通过stat获取请求资源文件信息，成功则将信息更新到m_file_stat结构体
+    //失败返回NO_RESOURCE状态，表示资源不存在
+    if (stat(m_real_file, &m_file_stat) < 0)
+        return NO_RESOURCE;
+    //判断文件的权限，是否可读，不可读则返回FORBIDDEN_REQUEST状态
+    if (!(m_file_stat.st_mode & S_IROTH))
+        return FORBIDDEN_REQUEST;
+    //判断文件类型，如果是目录，则返回BAD_REQUEST，表示请求报文有误
+    if (S_ISDIR(m_file_stat.st_mode))
+        return BAD_REQUEST;
+    //以只读方式获取文件描述符，通过mmap将该文件映射到内存中
+    int fd = open(m_real_file, O_RDONLY);
+    m_file_address = (char*)mmap(0, m_file_stat.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    //避免文件描述符的浪费和占用
+    close(fd);
+    //表示请求文件存在，且可以访问
+    return FILE_REQUEST;
+}	
+```
