@@ -243,12 +243,27 @@ void addsig(int sig, void(handler)(int), bool restart = true) {
 信息值传递给主循环，主循环再根据接收到的信号值执行目标信号对应的逻辑代码
 
 
-```c
+项目中，我们预先分配了MAX_FD个http连接对象：
+
+```cpp
+// 预先为每个可能的客户连接分配一个http_conn对象
+http_conn* users = new http_conn[MAX_FD];
+```
+
+试想，如果某一用户connect()到服务器之后，长时间不交换数据，一直占用服务器端的文件描述符，导致连接资源的浪费。这时候就应该利用定时器把这些超时的非活动连接释放掉，关闭其占用的文件描述符。
+
+项目中使用的是SIGALRM信号来实现定时器，利用alarm函数周期性的触发SIGALRM信号，信号处理函数利用管道通知主循环，主循环接收到该信号后对升序链表上所有定时器进行处理，若该段时间内没有交换数据，则将该连接关闭，释放所占用的资源。
+
+```cpp
+//设置定时器相关参数
+static int pipefd[2];
+static sort_timer_lst timer_lst;
+
 //创建管道套接字
 ret = socketpair(PF_UNIX, SOCK_STREAM, 0, pipefd);
 assert(ret != -1);
 
-//设置管道写端为非阻塞，为什么写端要非阻塞？
+//设置管道写端为非阻塞
 setnonblocking(pipefd[1]);
 
 //设置管道读端为ET非阻塞
@@ -325,48 +340,200 @@ while (!stop_server)
 }
 ```
 
-为什么管道写端要非阻塞？
 
-send是将信息发送给套接字缓冲区，如果缓冲区满了，则会阻塞，这时候会进一步增加信号处理函数的执行时间，为此，将其修改为非阻塞。
-
-没有对非阻塞返回值处理，如果阻塞是不是意味着这一次定时事件失效了？
-
-是的，但定时事件是非必须立即处理的事件，可以允许这样的情况发生。
-
-管道传递的是什么类型？switch-case的变量冲突？
-
-信号本身是整型数值，管道中传递的是ASCII码表中整型数值对应的字符。
-
-switch的变量一般为字符或整型，当switch的变量为字符时，case中可以是字符，也可以是字符对应的ASCII码。
-
-
-
-
-
-定时器处理非活动连接模块，主要分为两部分，其一为定时方法与信号通知流程，其二为定时器及其容器设计、定时任务的处理。
-
-本篇对第二部分进行介绍，具体的涉及到定时器设计、容器设计、定时任务处理函数和使用定时器。
-
-定时器设计，将连接资源和定时事件等封装起来，具体包括连接资源、超时时间和回调函数，这里的回调函数指向定时事件。
-
-定时器容器设计，将多个定时器串联组织起来统一处理，具体包括升序链表设计。
-
-定时任务处理函数，该函数封装在容器类中，具体的，函数遍历升序链表容器，根据超时时间，处理对应的定时器。
-
-代码分析-使用定时器，通过代码分析，如何在项目中使用定时器。
 
 **定时器设计**
 
 项目中将连接资源、定时事件和超时时间封装为定时器类，具体的，
 
-连接资源包括客户端套接字地址、文件描述符和定时器
+* 连接资源包括客户端套接字地址、文件描述符和定时器
 
-定时事件为回调函数，将其封装起来由用户自定义，这里是删除非活动socket上的注册事件，并关闭
+* 定时事件为回调函数，将其封装起来由用户自定义，这里是删除非活动socket上的注册事件，并关闭
 
-定时器超时时间 = 浏览器和服务器连接时刻 + 固定时间(TIMESLOT)，可以看出，定时器使用绝对时间作为超时值，这里alarm设置为5秒，连接超时为15秒。
+* 定时器超时时间 = 浏览器和服务器连接时刻 + 固定时间(TIMESLOT)，可以看出，定时器使用绝对时间作为超时值，这里alarm设置为5秒，连接超时为15秒。
 
+```cpp
+#pragma once
+#ifndef LST_TIMER
+#define LST_TIMER
 
-**定时器代码分析**
+#include <time.h>
+#include "./log.h"
+
+class util_timer;
+struct client_data
+{
+    sockaddr_in address;
+    int sockfd;
+    util_timer* timer;
+};
+
+class util_timer
+{
+public:
+    util_timer() : prev(NULL), next(NULL) {}
+
+public:
+    time_t expire;
+    void (*cb_func)(client_data*);
+    client_data* user_data;
+    util_timer* prev;
+    util_timer* next;
+};
+
+class sort_timer_lst
+{
+public:
+    sort_timer_lst() : head(NULL), tail(NULL) {}
+    ~sort_timer_lst()
+    {
+        util_timer* tmp = head;
+        while (tmp)
+        {
+            head = tmp->next;
+            delete tmp;
+            tmp = head;
+        }
+    }
+    void add_timer(util_timer* timer)
+    {
+        if (!timer)
+        {
+            return;
+        }
+        if (!head)
+        {
+            head = tail = timer;
+            return;
+        }
+        if (timer->expire < head->expire)
+        {
+            timer->next = head;
+            head->prev = timer;
+            head = timer;
+            return;
+        }
+        add_timer(timer, head);
+    }
+    void adjust_timer(util_timer* timer)
+    {
+        if (!timer)
+        {
+            return;
+        }
+        util_timer* tmp = timer->next;
+        if (!tmp || (timer->expire < tmp->expire))
+        {
+            return;
+        }
+        if (timer == head)
+        {
+            head = head->next;
+            head->prev = NULL;
+            timer->next = NULL;
+            add_timer(timer, head);
+        }
+        else
+        {
+            timer->prev->next = timer->next;
+            timer->next->prev = timer->prev;
+            add_timer(timer, timer->next);
+        }
+    }
+    void del_timer(util_timer* timer)
+    {
+        if (!timer)
+        {
+            return;
+        }
+        if ((timer == head) && (timer == tail))
+        {
+            delete timer;
+            head = NULL;
+            tail = NULL;
+            return;
+        }
+        if (timer == head)
+        {
+            head = head->next;
+            head->prev = NULL;
+            delete timer;
+            return;
+        }
+        if (timer == tail)
+        {
+            tail = tail->prev;
+            tail->next = NULL;
+            delete timer;
+            return;
+        }
+        timer->prev->next = timer->next;
+        timer->next->prev = timer->prev;
+        delete timer;
+    }
+    void tick()
+    {
+        if (!head)
+        {
+            return;
+        }
+        //printf( "timer tick\n" );
+        LOG_INFO("%s", "timer tick");
+        Log::get_instance()->flush();
+        time_t cur = time(NULL);
+        util_timer* tmp = head;
+        while (tmp)
+        {
+            if (cur < tmp->expire)
+            {
+                break;
+            }
+            tmp->cb_func(tmp->user_data);
+            head = tmp->next;
+            if (head)
+            {
+                head->prev = NULL;
+            }
+            delete tmp;
+            tmp = head;
+        }
+    }
+
+private:
+    void add_timer(util_timer* timer, util_timer* lst_head)
+    {
+        util_timer* prev = lst_head;
+        util_timer* tmp = prev->next;
+        while (tmp)
+        {
+            if (timer->expire < tmp->expire)
+            {
+                prev->next = timer;
+                timer->next = tmp;
+                tmp->prev = timer;
+                timer->prev = prev;
+                break;
+            }
+            prev = tmp;
+            tmp = tmp->next;
+        }
+        if (!tmp)
+        {
+            prev->next = timer;
+            timer->prev = prev;
+            timer->next = NULL;
+            tail = timer;
+        }
+    }
+
+private:
+    util_timer* head;
+    util_timer* tail;
+};
+
+#endif
+```
+
 
 
 
