@@ -1086,3 +1086,275 @@ http_conn::HTTP_CODE http_conn::do_request()
     return FILE_REQUEST;
 }	
 ```
+
+根据do_request的返回状态，服务器子线程调用process_write向m_write_buf中写入响应报文。
+
+add_status_line函数，添加状态行：http/1.1 状态码 状态消息
+
+add_headers函数添加消息报头，内部调用add_content_length和add_linger函数					    
+					    
+content-length记录响应报文长度，用于浏览器端判断服务器是否发送完数据
+
+connection记录连接状态，用于告诉浏览器端保持长连接	
+					    
+add_blank_line添加空行
+
+上述涉及的5个函数，均是内部调用add_response函数更新m_write_idx指针和缓冲区m_write_buf中的内容。
+
+```cpp					    							    
+bool http_conn::add_response(const char* format, ...)
+{
+    //如果写入内容超出m_write_buf大小则报错
+    if (m_write_idx >= WRITE_BUFFER_SIZE)
+        return false;
+    //定义可变参数列表
+    va_list arg_list;
+    //将变量arg_list初始化为传入参数
+    va_start(arg_list, format);
+    //将数据format从可变参数列表写入缓冲区写，返回写入数据的长度
+    int len = vsnprintf(m_write_buf + m_write_idx, WRITE_BUFFER_SIZE - 1 - m_write_idx, format, arg_list);
+   
+    //如果写入的数据长度超过缓冲区剩余空间，则报错
+    if (len >= (WRITE_BUFFER_SIZE - 1 - m_write_idx))
+    {
+        va_end(arg_list);
+        return false;
+    }
+
+    //更新m_write_idx位置
+    m_write_idx += len;
+    //清空可变参列表
+    va_end(arg_list);
+    LOG_INFO("request:%s", m_write_buf);
+    Log::get_instance()->flush();
+    return true;
+}
+
+//添加状态行
+bool http_conn::add_status_line(int status, const char* title)
+{
+    return add_response("%s %d %s\r\n", "HTTP/1.1", status, title);
+}
+
+//添加消息报头，具体的添加文本长度、连接状态和空行
+bool http_conn::add_headers(int content_len)
+{
+    add_content_length(content_len);
+    add_linger();
+    add_blank_line();
+}
+
+//添加Content-Length，表示响应报文的长度
+bool http_conn::add_content_length(int content_len)
+{
+    return add_response("Content-Length:%d\r\n", content_len);
+}
+
+//添加文本类型，这里是html
+bool http_conn::add_content_type()
+{
+    return add_response("Content-Type:%s\r\n", "text/html");
+}
+
+//添加连接状态，通知浏览器端是保持连接还是关闭
+bool http_conn::add_linger()
+{
+    return add_response("Connection:%s\r\n", (m_linger == true) ? "keep-alive" : "close");
+}
+
+//添加空行
+bool http_conn::add_blank_line()
+{
+    return add_response("%s", "\r\n");
+}
+
+//添加文本content
+bool http_conn::add_content(const char* content)
+{
+    return add_response("%s", content);
+}					    
+```
+	
+**响应报文**
+	
+响应报文分为两种，一种是请求文件的存在，通过io向量机制iovec，声明两个iovec，第一个指向m_write_buf，第二个指向mmap的地址m_file_address；一种是请求出错，这时候只申请一个iovec，指向m_write_buf。
+
+iovec是一个结构体，里面有两个元素，指针成员iov_base指向一个缓冲区，这个缓冲区是存放的是writev将要发送的数据。
+
+成员iov_len表示实际写入的长度
+
+```cpp					    
+bool http_conn::process_write(HTTP_CODE ret)
+{
+    switch (ret)
+    {
+    //内部错误，500
+    case INTERNAL_ERROR:
+    {
+        add_status_line(500, error_500_title);//状态行
+        add_headers(strlen(error_500_form));//消息报头
+        if (!add_content(error_500_form))
+            return false;
+        break;
+    }
+    //报文语法有误，404
+    case BAD_REQUEST:
+    {
+        add_status_line(404, error_404_title);
+        add_headers(strlen(error_404_form));
+        if (!add_content(error_404_form))
+            return false;
+        break;
+    }
+    //资源没有访问权限，403
+    case FORBIDDEN_REQUEST:
+    {
+        add_status_line(403, error_403_title);
+        add_headers(strlen(error_403_form));
+        if (!add_content(error_403_form))
+            return false;
+        break;
+    }
+    //文件存在，200
+    case FILE_REQUEST:
+    {
+        add_status_line(200, ok_200_title);
+        if (m_file_stat.st_size != 0)//如果请求的资源存在
+        {
+            add_headers(m_file_stat.st_size);
+            //第一个iovec指针指向响应报文缓冲区，长度指向m_write_idx
+            m_iv[0].iov_base = m_write_buf;
+            m_iv[0].iov_len = m_write_idx;
+            //第二个iovec指针指向mmap返回的文件指针，长度指向文件大小
+            m_iv[1].iov_base = m_file_address;
+            m_iv[1].iov_len = m_file_stat.st_size;
+            m_iv_count = 2;
+            //发送的全部数据为响应报文头部信息和文件大小
+            bytes_to_send = m_write_idx + m_file_stat.st_size;
+            return true;
+        }
+        else
+        {
+            //如果请求的资源大小为0，则返回空白html文件
+            const char* ok_string = "<html><body></body></html>";
+            add_headers(strlen(ok_string));
+            if (!add_content(ok_string))
+                return false;
+        }
+    }
+    default:
+        return false;
+    }
+    //除FILE_REQUEST状态外，其余状态只申请一个iovec，指向响应报文缓冲区
+    m_iv[0].iov_base = m_write_buf;
+    m_iv[0].iov_len = m_write_idx;
+    m_iv_count = 1;
+    bytes_to_send = m_write_idx;
+    return true;
+}					    
+```					    
+					    
+服务器子线程调用process_write完成响应报文，随后注册epollout事件。服务器主线程检测写事件，并调用http_conn::write函数将响应报文发送给浏览器端。
+
+该函数具体逻辑如下：
+
+在生成响应报文时初始化byte_to_send，包括头部信息和文件数据大小。通过writev函数循环发送响应报文数据，根据返回值更新byte_have_send和iovec结构体的指针和长度，并判断响应报文整体是否发送成功。
+
+					    
+若writev单次发送成功，更新byte_to_send和byte_have_send的大小，若响应报文整体发送成功,则取消mmap映射,并判断是否是长连接.
+
+长连接重置http类实例，注册读事件，不关闭连接，短连接直接关闭连接
+
+若writev单次发送不成功，判断是否是写缓冲区满了。
+
+若不是因为缓冲区满了而失败，取消mmap映射，关闭连接
+
+若eagain则满了，更新iovec结构体的指针和长度，并注册写事件，等待下一次写事件触发（当写缓冲区从不可写变为可写，触发epollout），因此在此期间无法立即接收到同一用户的下一请求，但可以保证连接的完整性。
+
+```cpp	
+bool http_conn::write()
+ {
+    int temp = 0;
+ 
+    int newadd = 0;
+ 
+    //若要发送的数据长度为0
+    //表示响应报文为空，一般不会出现这种情况
+    if(bytes_to_send==0)
+    {
+        modfd(m_epollfd,m_sockfd,EPOLLIN);
+        init();
+        return true;
+    }
+
+    while (1)
+    {   
+        //将响应报文的状态行、消息头、空行和响应正文发送给浏览器端
+        temp=writev(m_sockfd,m_iv,m_iv_count);
+
+        //正常发送，temp为发送的字节数
+        if (temp > 0)
+        {
+            //更新已发送字节
+            bytes_have_send += temp;
+            //偏移文件iovec的指针
+            newadd = bytes_have_send - m_write_idx;
+        }
+        if (temp <= -1)
+        {
+            //判断缓冲区是否满了
+            if (errno == EAGAIN)
+            {
+                //第一个iovec头部信息的数据已发送完，发送第二个iovec数据
+                if (bytes_have_send >= m_iv[0].iov_len)
+                {
+                    //不再继续发送头部信息
+                    m_iv[0].iov_len = 0;
+                    m_iv[1].iov_base = m_file_address + newadd;
+                    m_iv[1].iov_len = bytes_to_send;
+                }
+                //继续发送第一个iovec头部信息的数据
+                else
+                {
+                    m_iv[0].iov_base = m_write_buf + bytes_to_send;
+                    m_iv[0].iov_len = m_iv[0].iov_len - bytes_have_send;
+                }
+                //重新注册写事件
+                modfd(m_epollfd, m_sockfd, EPOLLOUT);
+                return true;
+            }
+            //如果发送失败，但不是缓冲区问题，取消映射
+            unmap();
+            return false;
+        }
+
+        //更新已发送字节数
+        bytes_to_send -= temp;
+
+        //判断条件，数据已全部发送完
+        if (bytes_to_send <= 0)
+        {
+            unmap();
+
+            //在epoll树上重置EPOLLONESHOT事件
+            modfd(m_epollfd,m_sockfd,EPOLLIN);
+
+            //浏览器的请求为长连接
+            if(m_linger)
+            {
+                //重新初始化HTTP对象
+                init();
+                return true;
+            }
+            else
+            {
+                return false;
+            }
+        }
+    }
+}
+```					    
+					    
+					    
+					    
+					    
